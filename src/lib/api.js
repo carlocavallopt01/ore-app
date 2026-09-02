@@ -32,6 +32,8 @@ function mapEditRequest(row) {
     stato: row.stato,
     createdAt: row.created_at,
     risoltaAt: row.risolta_at,
+    risposta: row.risposta,
+    vista: row.vista,
     shift: row.shift
       ? { date: row.shift.date, startTime: row.shift.start_time, endTime: row.shift.end_time }
       : null,
@@ -51,6 +53,8 @@ function mapAbsenceRequest(row) {
     stato: row.stato,
     createdAt: row.created_at,
     risoltaAt: row.risolta_at,
+    risposta: row.risposta,
+    vista: row.vista,
   };
 }
 
@@ -207,8 +211,12 @@ export async function getEditRequestsAdmin() {
   return data.map(mapEditRequest);
 }
 
-export async function resolveEditRequest(id, accetta) {
-  const { error } = await supabase.rpc("resolve_edit_request", { p_id: id, p_accetta: accetta });
+export async function resolveEditRequest(id, accetta, risposta) {
+  const { error } = await supabase.rpc("resolve_edit_request", {
+    p_id: id,
+    p_accetta: accetta,
+    p_risposta: risposta || null,
+  });
   if (error) throw error;
 }
 
@@ -245,8 +253,50 @@ export async function getAbsenceRequestsAdmin() {
   return data.map(mapAbsenceRequest);
 }
 
-export async function resolveAbsenceRequest(id, accetta) {
-  const { error } = await supabase.rpc("resolve_absence_request", { p_id: id, p_accetta: accetta });
+export async function resolveAbsenceRequest(id, accetta, risposta) {
+  const { error } = await supabase.rpc("resolve_absence_request", {
+    p_id: id,
+    p_accetta: accetta,
+    p_risposta: risposta || null,
+  });
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// Esito richieste per il dipendente (mostrato al prossimo accesso col PIN)
+// ---------------------------------------------------------------------
+export async function getUnseenResolvedRequests(employeeId) {
+  const [edits, absences] = await Promise.all([
+    supabase
+      .from("edit_requests")
+      .select("*, shift:shifts(date,start_time,end_time)")
+      .eq("employee_id", employeeId)
+      .eq("vista", false)
+      .neq("stato", "in_attesa")
+      .order("risolta_at", { ascending: false }),
+    supabase
+      .from("absence_requests")
+      .select("*")
+      .eq("employee_id", employeeId)
+      .eq("vista", false)
+      .neq("stato", "in_attesa")
+      .order("risolta_at", { ascending: false }),
+  ]);
+  if (edits.error) throw edits.error;
+  if (absences.error) throw absences.error;
+  return {
+    edits: edits.data.map(mapEditRequest),
+    absences: absences.data.map(mapAbsenceRequest),
+  };
+}
+
+export async function markEditRequestSeen(id) {
+  const { error } = await supabase.rpc("mark_edit_request_seen", { p_id: id });
+  if (error) throw error;
+}
+
+export async function markAbsenceRequestSeen(id) {
+  const { error } = await supabase.rpc("mark_absence_request_seen", { p_id: id });
   if (error) throw error;
 }
 

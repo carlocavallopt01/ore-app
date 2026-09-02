@@ -57,8 +57,8 @@ export function Field({ label, children, hint, className = "" }) {
 export const inputClass =
   "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-base text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
 
-export function Input(props) {
-  return <input className={inputClass} {...props} />;
+export function Input({ className = "", ...props }) {
+  return <input className={`${inputClass} ${className}`} {...props} />;
 }
 
 export function Textarea(props) {

@@ -8,7 +8,7 @@ import {
   resolveAbsenceRequest,
 } from "../../lib/api";
 import { formatDateShort, formatTimeHM } from "../../lib/time";
-import { Button, Card, Badge, Spinner, EmptyState, ErrorText } from "../ui";
+import { Button, Card, Badge, Spinner, EmptyState, ErrorText, Input } from "../ui";
 
 const STATO_TONE = { in_attesa: "amber", accettata: "emerald", rifiutata: "red" };
 const STATO_LABEL = { in_attesa: "In attesa", accettata: "Accettata", rifiutata: "Rifiutata" };
@@ -38,11 +38,11 @@ export default function RequestsPanel({ onResolved }) {
 
   const nameById = Object.fromEntries((employees || []).map((e) => [e.id, e.nome]));
 
-  async function resolve(kind, id, accetta) {
+  async function resolve(kind, id, accetta, risposta) {
     setBusyId(id);
     try {
-      if (kind === "edit") await resolveEditRequest(id, accetta);
-      else await resolveAbsenceRequest(id, accetta);
+      if (kind === "edit") await resolveEditRequest(id, accetta, risposta);
+      else await resolveAbsenceRequest(id, accetta, risposta);
       await load();
       onResolved?.();
     } finally {
@@ -76,30 +76,21 @@ export default function RequestsPanel({ onResolved }) {
         ) : (
           <div className="flex flex-col gap-2">
             {editsToShow.map((r) => (
-              <Card key={r.id} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="mb-1 flex items-center gap-2">
-                    <p className="font-600 text-slate-900 dark:text-white">{nameById[r.employeeId] || "—"}</p>
-                    <Badge tone={STATO_TONE[r.stato]}>{STATO_LABEL[r.stato]}</Badge>
-                  </div>
-                  {r.shift && (
-                    <p className="text-sm text-slate-600 dark:text-slate-300">
-                      Turno del {formatDateShort(r.shift.date)}, {formatTimeHM(r.shift.startTime)} – {formatTimeHM(r.shift.endTime)}
-                    </p>
-                  )}
-                  <p className="text-sm italic text-slate-500 dark:text-slate-400">"{r.motivo}"</p>
-                </div>
-                {r.stato === "in_attesa" && (
-                  <div className="flex gap-2">
-                    <Button variant="success" size="sm" disabled={busyId === r.id} onClick={() => resolve("edit", r.id, true)}>
-                      <Check size={14} /> Accetta
-                    </Button>
-                    <Button variant="danger" size="sm" disabled={busyId === r.id} onClick={() => resolve("edit", r.id, false)}>
-                      <X size={14} /> Rifiuta
-                    </Button>
-                  </div>
+              <RequestCard
+                key={r.id}
+                nome={nameById[r.employeeId] || "—"}
+                stato={r.stato}
+                risposta={r.risposta}
+                busy={busyId === r.id}
+                onResolve={(accetta, risposta) => resolve("edit", r.id, accetta, risposta)}
+              >
+                {r.shift && (
+                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                    Turno del {formatDateShort(r.shift.date)}, {formatTimeHM(r.shift.startTime)} – {formatTimeHM(r.shift.endTime)}
+                  </p>
                 )}
-              </Card>
+                <p className="text-sm italic text-slate-500 dark:text-slate-400">"{r.motivo}"</p>
+              </RequestCard>
             ))}
           </div>
         )}
@@ -112,34 +103,66 @@ export default function RequestsPanel({ onResolved }) {
         ) : (
           <div className="flex flex-col gap-2">
             {absencesToShow.map((r) => (
-              <Card key={r.id} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="mb-1 flex items-center gap-2">
-                    <p className="font-600 text-slate-900 dark:text-white">{nameById[r.employeeId] || "—"}</p>
-                    <Badge tone={STATO_TONE[r.stato]}>{STATO_LABEL[r.stato]}</Badge>
-                  </div>
-                  <p className="text-sm text-slate-600 dark:text-slate-300">
-                    {formatDateShort(r.dateFrom)}
-                    {r.dateTo !== r.dateFrom ? ` – ${formatDateShort(r.dateTo)}` : ""}
-                    {r.interaGiornata ? " · giornata intera" : ` · ${formatTimeHM(r.timeFrom)} – ${formatTimeHM(r.timeTo)}`}
-                  </p>
-                  {r.motivo && <p className="text-sm italic text-slate-500 dark:text-slate-400">"{r.motivo}"</p>}
-                </div>
-                {r.stato === "in_attesa" && (
-                  <div className="flex gap-2">
-                    <Button variant="success" size="sm" disabled={busyId === r.id} onClick={() => resolve("absence", r.id, true)}>
-                      <Check size={14} /> Accetta
-                    </Button>
-                    <Button variant="danger" size="sm" disabled={busyId === r.id} onClick={() => resolve("absence", r.id, false)}>
-                      <X size={14} /> Rifiuta
-                    </Button>
-                  </div>
-                )}
-              </Card>
+              <RequestCard
+                key={r.id}
+                nome={nameById[r.employeeId] || "—"}
+                stato={r.stato}
+                risposta={r.risposta}
+                busy={busyId === r.id}
+                onResolve={(accetta, risposta) => resolve("absence", r.id, accetta, risposta)}
+              >
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  {formatDateShort(r.dateFrom)}
+                  {r.dateTo !== r.dateFrom ? ` – ${formatDateShort(r.dateTo)}` : ""}
+                  {r.interaGiornata ? " · giornata intera" : ` · ${formatTimeHM(r.timeFrom)} – ${formatTimeHM(r.timeTo)}`}
+                </p>
+                {r.motivo && <p className="text-sm italic text-slate-500 dark:text-slate-400">"{r.motivo}"</p>}
+              </RequestCard>
             ))}
           </div>
         )}
       </section>
     </div>
+  );
+}
+
+function RequestCard({ nome, stato, risposta, busy, onResolve, children }) {
+  const [nota, setNota] = useState("");
+
+  return (
+    <Card className="flex flex-col gap-3 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="mb-1 flex items-center gap-2">
+            <p className="font-600 text-slate-900 dark:text-white">{nome}</p>
+            <Badge tone={STATO_TONE[stato]}>{STATO_LABEL[stato]}</Badge>
+          </div>
+          {children}
+          {stato !== "in_attesa" && risposta && (
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              Nota al dipendente: <span className="italic">"{risposta}"</span>
+            </p>
+          )}
+        </div>
+      </div>
+      {stato === "in_attesa" && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            value={nota}
+            onChange={(e) => setNota(e.target.value)}
+            placeholder="Nota per il dipendente (facoltativa)"
+            className="flex-1"
+          />
+          <div className="flex gap-2">
+            <Button variant="success" size="sm" disabled={busy} onClick={() => onResolve(true, nota.trim())}>
+              <Check size={14} /> Accetta
+            </Button>
+            <Button variant="danger" size="sm" disabled={busy} onClick={() => onResolve(false, nota.trim())}>
+              <X size={14} /> Rifiuta
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }

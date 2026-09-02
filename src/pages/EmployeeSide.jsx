@@ -8,6 +8,9 @@ import {
   getRecentShiftsForEmployee,
   createEditRequest,
   createAbsenceRequest,
+  getUnseenResolvedRequests,
+  markEditRequestSeen,
+  markAbsenceRequestSeen,
 } from "../lib/api";
 import { getRomeTodayISO, formatDateLong, formatDateShort, formatTimeHM, minutesBetween, formatDurationHM } from "../lib/time";
 import ThemeToggle from "../components/ThemeToggle";
@@ -30,6 +33,7 @@ export default function EmployeeSide({ navigate }) {
   const [editRequestFor, setEditRequestFor] = useState(null); // "picker" | shiftId | null
   const [showAbsenceModal, setShowAbsenceModal] = useState(false);
   const [toast, setToast] = useState("");
+  const [notifications, setNotifications] = useState(null); // { edits: [], absences: [] } | null
 
   useEffect(() => {
     getEmployeesPublic()
@@ -65,6 +69,7 @@ export default function EmployeeSide({ navigate }) {
     setPinValue("");
     setPinError("");
     setShifts([]);
+    setNotifications(null);
   }
 
   const handlePinComplete = useCallback(
@@ -76,6 +81,13 @@ export default function EmployeeSide({ navigate }) {
         if (ok) {
           setUnlocked(true);
           loadToday(selected.id);
+          getUnseenResolvedRequests(selected.id)
+            .then((n) => {
+              if (n.edits.length > 0 || n.absences.length > 0) setNotifications(n);
+            })
+            .catch(() => {
+              // silenzioso: le notifiche non sono critiche per timbrare
+            });
         } else {
           setPinError("PIN errato, riprova.");
           setPinValue("");
@@ -249,6 +261,10 @@ export default function EmployeeSide({ navigate }) {
           }}
         />
       )}
+
+      {notifications && (notifications.edits.length > 0 || notifications.absences.length > 0) && (
+        <NotificationsModal notifications={notifications} setNotifications={setNotifications} />
+      )}
     </Shell>
   );
 }
@@ -271,6 +287,70 @@ function Shell({ children, footer, navigate }) {
         )}
       </div>
     </div>
+  );
+}
+
+const STATO_LABEL = { accettata: "Accettata", rifiutata: "Rifiutata" };
+const STATO_TONE = { accettata: "text-emerald-700 dark:text-emerald-400", rifiutata: "text-red-700 dark:text-red-400" };
+
+function NotificationsModal({ notifications, setNotifications }) {
+  const [busyId, setBusyId] = useState(null);
+
+  async function dismissEdit(item) {
+    setBusyId(item.id);
+    try {
+      await markEditRequestSeen(item.id);
+      setNotifications((prev) => ({ ...prev, edits: prev.edits.filter((e) => e.id !== item.id) }));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function dismissAbsence(item) {
+    setBusyId(item.id);
+    try {
+      await markAbsenceRequestSeen(item.id);
+      setNotifications((prev) => ({ ...prev, absences: prev.absences.filter((a) => a.id !== item.id) }));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <Modal title="Esito richieste" onClose={() => {}}>
+      <div className="flex flex-col gap-3">
+        {notifications.edits.map((r) => (
+          <Card key={r.id} className="p-4">
+            <p className={`font-700 ${STATO_TONE[r.stato]}`}>Richiesta di modifica turno · {STATO_LABEL[r.stato]}</p>
+            {r.shift && (
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                Turno del {formatDateShort(r.shift.date)}, {formatTimeHM(r.shift.startTime)} – {formatTimeHM(r.shift.endTime)}
+              </p>
+            )}
+            <p className="mt-1 text-sm italic text-slate-500 dark:text-slate-400">Tuo motivo: "{r.motivo}"</p>
+            {r.risposta && <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">Nota del Titolare: "{r.risposta}"</p>}
+            <Button size="sm" className="mt-3" disabled={busyId === r.id} onClick={() => dismissEdit(r)}>
+              {busyId === r.id ? <Spinner size={14} /> : "Ho capito"}
+            </Button>
+          </Card>
+        ))}
+        {notifications.absences.map((r) => (
+          <Card key={r.id} className="p-4">
+            <p className={`font-700 ${STATO_TONE[r.stato]}`}>Richiesta di assenza · {STATO_LABEL[r.stato]}</p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              {formatDateShort(r.dateFrom)}
+              {r.dateTo !== r.dateFrom ? ` – ${formatDateShort(r.dateTo)}` : ""}
+              {r.interaGiornata ? " · giornata intera" : ` · ${formatTimeHM(r.timeFrom)} – ${formatTimeHM(r.timeTo)}`}
+            </p>
+            {r.motivo && <p className="mt-1 text-sm italic text-slate-500 dark:text-slate-400">Tuo motivo: "{r.motivo}"</p>}
+            {r.risposta && <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">Nota del Titolare: "{r.risposta}"</p>}
+            <Button size="sm" className="mt-3" disabled={busyId === r.id} onClick={() => dismissAbsence(r)}>
+              {busyId === r.id ? <Spinner size={14} /> : "Ho capito"}
+            </Button>
+          </Card>
+        ))}
+      </div>
+    </Modal>
   );
 }
 

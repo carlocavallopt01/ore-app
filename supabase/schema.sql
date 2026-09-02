@@ -114,8 +114,16 @@ create table if not exists edit_requests (
   motivo text not null,
   stato text not null default 'in_attesa' check (stato in ('in_attesa', 'accettata', 'rifiutata')),
   created_at timestamptz not null default now(),
-  risolta_at timestamptz
+  risolta_at timestamptz,
+  risposta text,
+  vista boolean not null default false
 );
+
+-- Eseguendo di nuovo questo file su un database già creato in precedenza
+-- (prima dell'introduzione della notifica di esito al dipendente), queste
+-- ALTER aggiungono le due colonne senza toccare i dati esistenti.
+alter table edit_requests add column if not exists risposta text;
+alter table edit_requests add column if not exists vista boolean not null default false;
 
 create index if not exists edit_requests_stato_idx on edit_requests (stato);
 
@@ -147,12 +155,17 @@ create table if not exists absence_requests (
   stato text not null default 'in_attesa' check (stato in ('in_attesa', 'accettata', 'rifiutata')),
   created_at timestamptz not null default now(),
   risolta_at timestamptz,
+  risposta text,
+  vista boolean not null default false,
   check (date_to >= date_from),
   check (
     (intera_giornata and time_from is null and time_to is null)
     or (not intera_giornata and time_from is not null and time_to is not null and time_to > time_from)
   )
 );
+
+alter table absence_requests add column if not exists risposta text;
+alter table absence_requests add column if not exists vista boolean not null default false;
 
 create index if not exists absence_requests_stato_idx on absence_requests (stato);
 
@@ -304,9 +317,18 @@ $$;
 grant execute on function admin_delete_shift(uuid) to anon;
 
 -- ---------------------------------------------------------------------
--- Funzioni RPC: risoluzione richieste
+-- Funzioni RPC: risoluzione richieste (con nota facoltativa del Titolare,
+-- che il dipendente vede al prossimo accesso col PIN) e conferma di
+-- lettura da parte del dipendente.
 -- ---------------------------------------------------------------------
-create or replace function resolve_edit_request(p_id uuid, p_accetta boolean)
+-- Rimuove la vecchia firma a 2 argomenti se presente da un'installazione
+-- precedente, per evitare ambiguità con la nuova a 3 argomenti (la terza,
+-- p_risposta, ha un default e resterebbe altrimenti "nascosta" dietro la
+-- firma più vecchia).
+drop function if exists resolve_edit_request(uuid, boolean);
+drop function if exists resolve_absence_request(uuid, boolean);
+
+create or replace function resolve_edit_request(p_id uuid, p_accetta boolean, p_risposta text default null)
 returns void
 language sql
 security definer
@@ -314,12 +336,14 @@ set search_path = public
 as $$
   update edit_requests
     set stato = case when p_accetta then 'accettata' else 'rifiutata' end,
-        risolta_at = now()
+        risolta_at = now(),
+        risposta = p_risposta,
+        vista = false
     where id = p_id and stato = 'in_attesa';
 $$;
-grant execute on function resolve_edit_request(uuid, boolean) to anon;
+grant execute on function resolve_edit_request(uuid, boolean, text) to anon;
 
-create or replace function resolve_absence_request(p_id uuid, p_accetta boolean)
+create or replace function resolve_absence_request(p_id uuid, p_accetta boolean, p_risposta text default null)
 returns void
 language sql
 security definer
@@ -327,10 +351,32 @@ set search_path = public
 as $$
   update absence_requests
     set stato = case when p_accetta then 'accettata' else 'rifiutata' end,
-        risolta_at = now()
+        risolta_at = now(),
+        risposta = p_risposta,
+        vista = false
     where id = p_id and stato = 'in_attesa';
 $$;
-grant execute on function resolve_absence_request(uuid, boolean) to anon;
+grant execute on function resolve_absence_request(uuid, boolean, text) to anon;
+
+create or replace function mark_edit_request_seen(p_id uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update edit_requests set vista = true where id = p_id;
+$$;
+grant execute on function mark_edit_request_seen(uuid) to anon;
+
+create or replace function mark_absence_request_seen(p_id uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update absence_requests set vista = true where id = p_id;
+$$;
+grant execute on function mark_absence_request_seen(uuid) to anon;
 
 -- ---------------------------------------------------------------------
 -- Funzioni RPC: pagamenti e riepiloghi (calcolo al minuto esatto)
