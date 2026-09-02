@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Clock, Plus, Lock, PencilLine, CalendarOff, ChevronLeft, ArrowRight } from "lucide-react";
+import { Clock, Plus, Lock, PencilLine, CalendarOff, CalendarDays, ChevronLeft, ArrowRight } from "lucide-react";
 import {
   getEmployeesPublic,
   verifyEmployeePin,
   getShiftsForEmployeeDate,
   addShift,
-  getRecentShiftsForEmployee,
   createEditRequest,
   createAbsenceRequest,
   getUnseenResolvedRequests,
@@ -30,7 +29,7 @@ export default function EmployeeSide({ navigate }) {
   const [shifts, setShifts] = useState([]);
   const [shiftsLoading, setShiftsLoading] = useState(false);
   const [showShiftForm, setShowShiftForm] = useState(false);
-  const [editRequestFor, setEditRequestFor] = useState(null); // "picker" | shiftId | null
+  const [editRequestFor, setEditRequestFor] = useState(null); // true (scegli data) | oggetto turno | null
   const [showAbsenceModal, setShowAbsenceModal] = useState(false);
   const [toast, setToast] = useState("");
   const [notifications, setNotifications] = useState(null); // { edits: [], absences: [] } | null
@@ -203,7 +202,7 @@ export default function EmployeeSide({ navigate }) {
                 </div>
               </div>
               <button
-                onClick={() => setEditRequestFor(s.id)}
+                onClick={() => setEditRequestFor(s)}
                 title="Richiedi modifica"
                 className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-600 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
               >
@@ -231,8 +230,8 @@ export default function EmployeeSide({ navigate }) {
       )}
 
       <div className="mt-3 grid grid-cols-2 gap-3">
-        <Button variant="secondary" onClick={() => setEditRequestFor("picker")}>
-          <PencilLine size={16} /> Correggi turno passato
+        <Button variant="secondary" onClick={() => setEditRequestFor(true)}>
+          <CalendarDays size={16} /> Turno di un giorno passato
         </Button>
         <Button variant="secondary" onClick={() => setShowAbsenceModal(true)}>
           <CalendarOff size={16} /> Richiedi assenza
@@ -242,11 +241,11 @@ export default function EmployeeSide({ navigate }) {
       {editRequestFor && (
         <EditRequestModal
           employeeId={selected.id}
-          initialShiftId={editRequestFor === "picker" ? null : editRequestFor}
+          initialShift={editRequestFor === true ? null : editRequestFor}
           onClose={() => setEditRequestFor(null)}
           onSubmitted={() => {
             setEditRequestFor(null);
-            setToast("Richiesta di modifica inviata. In attesa di approvazione.");
+            setToast("Richiesta inviata. In attesa di approvazione.");
           }}
         />
       )}
@@ -321,13 +320,22 @@ function NotificationsModal({ notifications, setNotifications }) {
       <div className="flex flex-col gap-3">
         {notifications.edits.map((r) => (
           <Card key={r.id} className="p-4">
-            <p className={`font-700 ${STATO_TONE[r.stato]}`}>Richiesta di modifica turno · {STATO_LABEL[r.stato]}</p>
-            {r.shift && (
+            <p className={`font-700 ${STATO_TONE[r.stato]}`}>
+              {r.shift ? "Richiesta di modifica turno" : "Turno per un giorno passato"} · {STATO_LABEL[r.stato]}
+            </p>
+            {r.shift ? (
               <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
                 Turno del {formatDateShort(r.shift.date)}, {formatTimeHM(r.shift.startTime)} – {formatTimeHM(r.shift.endTime)}
               </p>
+            ) : (
+              r.proposedDate && (
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                  {formatDateShort(r.proposedDate)}, {formatTimeHM(r.proposedStartTime)} – {formatTimeHM(r.proposedEndTime)}
+                  {r.stato === "accettata" ? " (turno aggiunto)" : ""}
+                </p>
+              )
             )}
-            <p className="mt-1 text-sm italic text-slate-500 dark:text-slate-400">Tuo motivo: "{r.motivo}"</p>
+            {r.motivo && <p className="mt-1 text-sm italic text-slate-500 dark:text-slate-400">Tuo motivo: "{r.motivo}"</p>}
             {r.risposta && <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">Nota del Titolare: "{r.risposta}"</p>}
             <Button size="sm" className="mt-3" disabled={busyId === r.id} onClick={() => dismissEdit(r)}>
               {busyId === r.id ? <Spinner size={14} /> : "Ho capito"}
@@ -401,24 +409,61 @@ function ShiftFormInline({ employeeId, onCancel, onSaved }) {
   );
 }
 
-function EditRequestModal({ employeeId, initialShiftId, onClose, onSubmitted }) {
-  const [recentShifts, setRecentShifts] = useState(null);
-  const [shiftId, setShiftId] = useState(initialShiftId);
+// Due modalità:
+// - initialShift dato (click sul lucchetto di un turno di oggi): corregge
+//   direttamente quel turno, come prima.
+// - nessun initialShift (pulsante "Turno di un giorno passato"): il
+//   dipendente sceglie prima una data. Se quel giorno ha già turni li
+//   mostra per la correzione; altrimenti (o su richiesta) fa proporre
+//   entrata/uscita per un turno nuovo, che verrà creato automaticamente
+//   se il Titolare accetta.
+function EditRequestModal({ employeeId, initialShift, onClose, onSubmitted }) {
+  const [date, setDate] = useState(initialShift?.date || "");
+  const [dayShifts, setDayShifts] = useState(initialShift ? [initialShift] : null);
+  const [dayLoading, setDayLoading] = useState(false);
+  const [selection, setSelection] = useState(initialShift ? { type: "existing", shiftId: initialShift.id } : null);
+  const [proposedStart, setProposedStart] = useState("");
+  const [proposedEnd, setProposedEnd] = useState("");
   const [motivo, setMotivo] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getRecentShiftsForEmployee(employeeId, 60).then(setRecentShifts).catch((e) => setError(e.message));
-  }, [employeeId]);
+    if (initialShift || !date) return;
+    setDayLoading(true);
+    setError("");
+    getShiftsForEmployeeDate(employeeId, date)
+      .then((data) => {
+        setDayShifts(data);
+        setSelection(data.length > 0 ? { type: "existing", shiftId: data[0].id } : { type: "new" });
+      })
+      .catch((e) => setError(e.message || "Errore nel caricamento."))
+      .finally(() => setDayLoading(false));
+  }, [date, employeeId, initialShift]);
 
   async function submit() {
-    if (!shiftId) return setError("Seleziona un turno.");
-    if (!motivo.trim()) return setError("Scrivi il motivo della richiesta.");
+    if (!date) return setError("Seleziona una data.");
+    if (!selection) return setError("Seleziona un turno o aggiungine uno nuovo.");
+    if (selection.type === "existing") {
+      if (!motivo.trim()) return setError("Scrivi il motivo della richiesta.");
+    } else {
+      if (!proposedStart || !proposedEnd) return setError("Inserisci entrata e uscita.");
+      if (proposedEnd <= proposedStart) return setError("L'uscita deve essere dopo l'entrata.");
+    }
     setSaving(true);
     setError("");
     try {
-      await createEditRequest({ shiftId, employeeId, motivo: motivo.trim() });
+      if (selection.type === "existing") {
+        await createEditRequest({ shiftId: selection.shiftId, employeeId, motivo: motivo.trim() });
+      } else {
+        await createEditRequest({
+          employeeId,
+          motivo: motivo.trim(),
+          proposedDate: date,
+          proposedStartTime: proposedStart,
+          proposedEndTime: proposedEnd,
+        });
+      }
       onSubmitted();
     } catch (e) {
       setError(e.message || "Errore nell'invio della richiesta.");
@@ -429,7 +474,7 @@ function EditRequestModal({ employeeId, initialShiftId, onClose, onSubmitted }) 
 
   return (
     <Modal
-      title="Richiedi modifica turno"
+      title={initialShift ? "Richiedi modifica turno" : "Turno di un giorno passato"}
       onClose={onClose}
       footer={
         <>
@@ -443,35 +488,71 @@ function EditRequestModal({ employeeId, initialShiftId, onClose, onSubmitted }) 
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Turno da correggere">
-          {!recentShifts ? (
-            <Spinner size={18} className="text-indigo-600" />
-          ) : recentShifts.length === 0 ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400">Nessun turno recente trovato.</p>
-          ) : (
-            <div className="flex max-h-52 flex-col gap-1.5 overflow-y-auto">
-              {recentShifts.map((s) => (
+        {initialShift ? (
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Turno del {formatDateShort(initialShift.date)}, {formatTimeHM(initialShift.startTime)} – {formatTimeHM(initialShift.endTime)}
+          </p>
+        ) : (
+          <>
+            <Field label="Data">
+              <Input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />
+            </Field>
+
+            {date && dayLoading && <Spinner size={18} className="text-indigo-600" />}
+
+            {date && !dayLoading && dayShifts && dayShifts.length > 0 && (
+              <Field label="Turni già registrati quel giorno">
+                <div className="flex flex-col gap-1.5">
+                  {dayShifts.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setSelection({ type: "existing", shiftId: s.id })}
+                      className={`rounded-xl border px-3 py-2 text-left text-sm transition ${
+                        selection?.type === "existing" && selection.shiftId === s.id
+                          ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30"
+                          : "border-slate-200 dark:border-slate-700"
+                      }`}
+                    >
+                      {formatTimeHM(s.startTime)} – {formatTimeHM(s.endTime)}
+                    </button>
+                  ))}
+                </div>
                 <button
-                  key={s.id}
                   type="button"
-                  onClick={() => setShiftId(s.id)}
-                  className={`rounded-xl border px-3 py-2 text-left text-sm transition ${
-                    shiftId === s.id
-                      ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30"
-                      : "border-slate-200 dark:border-slate-700"
+                  onClick={() => setSelection({ type: "new" })}
+                  className={`mt-2 self-start text-sm font-600 underline ${
+                    selection?.type === "new" ? "text-indigo-700 dark:text-indigo-300" : "text-slate-500 dark:text-slate-400"
                   }`}
                 >
-                  <span className="font-600 text-slate-800 dark:text-slate-100">{formatDateShort(s.date)}</span>{" "}
-                  <span className="text-slate-500 dark:text-slate-400">
-                    {formatTimeHM(s.startTime)} – {formatTimeHM(s.endTime)}
-                  </span>
+                  Il turno che cerchi non c'è? Aggiungi un turno mancante per questo giorno
                 </button>
-              ))}
-            </div>
-          )}
-        </Field>
-        <Field label="Motivo">
-          <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Es. ho sbagliato l'orario di uscita" />
+              </Field>
+            )}
+
+            {date && !dayLoading && dayShifts && dayShifts.length === 0 && (
+              <p className="text-sm text-slate-500 dark:text-slate-400">Nessun turno registrato per questo giorno. Inserisci gli orari lavorati:</p>
+            )}
+
+            {date && !dayLoading && selection?.type === "new" && (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Entrata">
+                  <Input type="time" value={proposedStart} onChange={(e) => setProposedStart(e.target.value)} />
+                </Field>
+                <Field label="Uscita">
+                  <Input type="time" value={proposedEnd} onChange={(e) => setProposedEnd(e.target.value)} />
+                </Field>
+              </div>
+            )}
+          </>
+        )}
+
+        <Field label={selection?.type === "new" ? "Nota (facoltativa)" : "Motivo"}>
+          <Textarea
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            placeholder={selection?.type === "new" ? "Es. giorno lavorato prima di usare l'app" : "Es. ho sbagliato l'orario di uscita"}
+          />
         </Field>
         <ErrorText>{error}</ErrorText>
       </div>

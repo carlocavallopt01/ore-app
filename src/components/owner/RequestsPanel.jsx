@@ -70,7 +70,7 @@ export default function RequestsPanel({ onResolved }) {
       </label>
 
       <section>
-        <h2 className="mb-3 text-sm font-700 uppercase tracking-wide text-slate-500 dark:text-slate-400">Modifiche turno</h2>
+        <h2 className="mb-3 text-sm font-700 uppercase tracking-wide text-slate-500 dark:text-slate-400">Modifiche e turni passati</h2>
         {editsToShow.length === 0 ? (
           <EmptyState>Nessuna richiesta di modifica.</EmptyState>
         ) : (
@@ -84,12 +84,24 @@ export default function RequestsPanel({ onResolved }) {
                 busy={busyId === r.id}
                 onResolve={(accetta, risposta) => resolve("edit", r.id, accetta, risposta)}
               >
-                {r.shift && (
+                {r.shift ? (
                   <p className="text-sm text-slate-600 dark:text-slate-300">
-                    Turno del {formatDateShort(r.shift.date)}, {formatTimeHM(r.shift.startTime)} – {formatTimeHM(r.shift.endTime)}
+                    Correzione turno del {formatDateShort(r.shift.date)}, {formatTimeHM(r.shift.startTime)} – {formatTimeHM(r.shift.endTime)}
                   </p>
+                ) : (
+                  r.proposedDate && (
+                    <>
+                      <p className="text-sm text-slate-600 dark:text-slate-300">
+                        Nuovo turno proposto: {formatDateShort(r.proposedDate)}, {formatTimeHM(r.proposedStartTime)} –{" "}
+                        {formatTimeHM(r.proposedEndTime)}
+                      </p>
+                      {r.stato === "in_attesa" && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Accettando, il turno viene creato automaticamente.</p>
+                      )}
+                    </>
+                  )
                 )}
-                <p className="text-sm italic text-slate-500 dark:text-slate-400">"{r.motivo}"</p>
+                {r.motivo && <p className="text-sm italic text-slate-500 dark:text-slate-400">"{r.motivo}"</p>}
               </RequestCard>
             ))}
           </div>

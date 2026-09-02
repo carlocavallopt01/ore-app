@@ -107,11 +107,20 @@ create policy "payments anon select" on payments
 -- ---------------------------------------------------------------------
 -- Richieste di modifica turno
 -- ---------------------------------------------------------------------
+-- shift_id è nullable: una richiesta può riferirsi a un turno già
+-- esistente (correzione, shift_id valorizzato) oppure a un giorno passato
+-- senza ancora nessun turno registrato (proposed_date/start/end
+-- valorizzati, shift_id nullo) — usata dal dipendente per dichiarare ore
+-- già lavorate prima di iniziare a usare l'app. All'accettazione di una
+-- richiesta del secondo tipo, il turno viene creato automaticamente.
 create table if not exists edit_requests (
   id uuid primary key default gen_random_uuid(),
-  shift_id uuid not null references shifts(id) on delete cascade,
+  shift_id uuid references shifts(id) on delete cascade,
   employee_id uuid not null references employees(id) on delete cascade,
-  motivo text not null,
+  motivo text,
+  proposed_date date,
+  proposed_start_time time,
+  proposed_end_time time,
   stato text not null default 'in_attesa' check (stato in ('in_attesa', 'accettata', 'rifiutata')),
   created_at timestamptz not null default now(),
   risolta_at timestamptz,
@@ -119,11 +128,23 @@ create table if not exists edit_requests (
   vista boolean not null default false
 );
 
--- Eseguendo di nuovo questo file su un database già creato in precedenza
--- (prima dell'introduzione della notifica di esito al dipendente), queste
--- ALTER aggiungono le due colonne senza toccare i dati esistenti.
+-- Eseguendo di nuovo questo file su un database già creato in precedenza,
+-- queste ALTER aggiungono le colonne mancanti senza toccare i dati
+-- esistenti (tutte le richieste già presenti restano valide: hanno
+-- shift_id valorizzato, quindi soddisfano comunque il vincolo sotto).
 alter table edit_requests add column if not exists risposta text;
 alter table edit_requests add column if not exists vista boolean not null default false;
+alter table edit_requests add column if not exists proposed_date date;
+alter table edit_requests add column if not exists proposed_start_time time;
+alter table edit_requests add column if not exists proposed_end_time time;
+alter table edit_requests alter column shift_id drop not null;
+alter table edit_requests alter column motivo drop not null;
+
+alter table edit_requests drop constraint if exists edit_requests_shift_or_proposal;
+alter table edit_requests add constraint edit_requests_shift_or_proposal check (
+  shift_id is not null
+  or (proposed_date is not null and proposed_start_time is not null and proposed_end_time is not null)
+);
 
 create index if not exists edit_requests_stato_idx on edit_requests (stato);
 
@@ -328,18 +349,44 @@ grant execute on function admin_delete_shift(uuid) to anon;
 drop function if exists resolve_edit_request(uuid, boolean);
 drop function if exists resolve_absence_request(uuid, boolean);
 
+-- Se la richiesta accettata è una proposta di nuovo turno (shift_id nullo,
+-- giorno passato senza turno esistente), accettarla crea automaticamente
+-- il turno con i dati proposti dal dipendente.
 create or replace function resolve_edit_request(p_id uuid, p_accetta boolean, p_risposta text default null)
 returns void
-language sql
+language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_shift_id uuid;
+  v_employee_id uuid;
+  v_proposed_date date;
+  v_proposed_start time;
+  v_proposed_end time;
+begin
+  select shift_id, employee_id, proposed_date, proposed_start_time, proposed_end_time
+    into v_shift_id, v_employee_id, v_proposed_date, v_proposed_start, v_proposed_end
+    from edit_requests
+    where id = p_id and stato = 'in_attesa'
+    for update;
+
+  if not found then
+    return;
+  end if;
+
+  if p_accetta and v_shift_id is null then
+    insert into shifts (employee_id, date, start_time, end_time, locked)
+    values (v_employee_id, v_proposed_date, v_proposed_start, v_proposed_end, true);
+  end if;
+
   update edit_requests
     set stato = case when p_accetta then 'accettata' else 'rifiutata' end,
         risolta_at = now(),
         risposta = p_risposta,
         vista = false
-    where id = p_id and stato = 'in_attesa';
+    where id = p_id;
+end;
 $$;
 grant execute on function resolve_edit_request(uuid, boolean, text) to anon;
 

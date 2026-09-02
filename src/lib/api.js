@@ -37,6 +37,9 @@ function mapEditRequest(row) {
     shift: row.shift
       ? { date: row.shift.date, startTime: row.shift.start_time, endTime: row.shift.end_time }
       : null,
+    proposedDate: row.proposed_date,
+    proposedStartTime: row.proposed_start_time,
+    proposedEndTime: row.proposed_end_time,
   };
 }
 
@@ -147,19 +150,6 @@ export async function getShiftsForEmployeeDate(employeeId, date) {
   return data.map(mapShift);
 }
 
-export async function getRecentShiftsForEmployee(employeeId, days = 60) {
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const { data, error } = await supabase
-    .from("shifts")
-    .select("*")
-    .eq("employee_id", employeeId)
-    .gte("date", since)
-    .order("date", { ascending: false })
-    .order("start_time", { ascending: false });
-  if (error) throw error;
-  return data.map(mapShift);
-}
-
 export async function addShift({ employeeId, date, startTime, endTime }) {
   const { error } = await supabase
     .from("shifts")
@@ -195,10 +185,18 @@ export async function adminDeleteShift(id) {
 // ---------------------------------------------------------------------
 // Richieste di modifica turno
 // ---------------------------------------------------------------------
-export async function createEditRequest({ shiftId, employeeId, motivo }) {
-  const { error } = await supabase
-    .from("edit_requests")
-    .insert({ shift_id: shiftId, employee_id: employeeId, motivo });
+// Correzione di un turno esistente: passare shiftId. Proposta di un turno
+// per un giorno passato che non ne ha ancora nessuno: passare invece
+// proposedDate/proposedStartTime/proposedEndTime (shiftId omesso).
+export async function createEditRequest({ shiftId, employeeId, motivo, proposedDate, proposedStartTime, proposedEndTime }) {
+  const { error } = await supabase.from("edit_requests").insert({
+    shift_id: shiftId || null,
+    employee_id: employeeId,
+    motivo: motivo || null,
+    proposed_date: proposedDate || null,
+    proposed_start_time: proposedStartTime || null,
+    proposed_end_time: proposedEndTime || null,
+  });
   if (error) throw error;
 }
 
