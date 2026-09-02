@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, FileDown, FileSpreadsheet } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, FileDown, FileSpreadsheet } from "lucide-react";
 import { getMonthlySummary, getShiftsAdmin } from "../../lib/api";
 import { getRomeParts, monthLabel, shiftMonth, formatDurationHM, formatCurrency } from "../../lib/time";
 import { exportSummaryToExcel, exportSummaryToPdf } from "../../lib/export";
 import { Button, Card, Select, ErrorText, Spinner, EmptyState } from "../ui";
+import ShiftRow from "./ShiftRow";
 
 const nowParts = getRomeParts();
 
@@ -14,6 +15,16 @@ export default function MonthlySummary() {
   const [error, setError] = useState("");
   const [employeeFilter, setEmployeeFilter] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [detailByEmployee, setDetailByEmployee] = useState({});
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  function monthRange() {
+    const from = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    return { from, to };
+  }
 
   const load = useCallback(async () => {
     try {
@@ -29,7 +40,41 @@ export default function MonthlySummary() {
 
   useEffect(() => {
     setEmployeeFilter("");
+    setExpandedId(null);
+    setDetailByEmployee({});
   }, [year, month]);
+
+  const loadDetail = useCallback(
+    async (employeeId) => {
+      setDetailLoading(true);
+      try {
+        const { from, to } = monthRange();
+        const shifts = await getShiftsAdmin({ employeeId, dateFrom: from, dateTo: to });
+        setDetailByEmployee((prev) => ({ ...prev, [employeeId]: shifts }));
+      } catch (e) {
+        setError(e.message || "Errore nel caricamento dei turni.");
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [year, month]
+  );
+
+  function toggleExpand(employeeId) {
+    if (expandedId === employeeId) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(employeeId);
+    if (!detailByEmployee[employeeId]) loadDetail(employeeId);
+  }
+
+  // Una modifica/eliminazione può cambiare ore e costo del mese: ricarico
+  // sia il dettaglio del dipendente sia il riepilogo.
+  async function onShiftChanged(employeeId) {
+    await Promise.all([loadDetail(employeeId), load()]);
+  }
 
   function go(delta) {
     const next = shiftMonth(year, month, delta);
@@ -42,13 +87,6 @@ export default function MonthlySummary() {
     (acc, r) => ({ minutes: acc.minutes + r.totalMinutes, cost: acc.cost + r.totalCost }),
     { minutes: 0, cost: 0 }
   );
-
-  function monthRange() {
-    const from = `${year}-${String(month).padStart(2, "0")}-01`;
-    const lastDay = new Date(year, month, 0).getDate();
-    const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-    return { from, to };
-  }
 
   async function doExport(format) {
     setExporting(true);
@@ -106,17 +144,50 @@ export default function MonthlySummary() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {rows.map((r) => (
-                  <tr key={r.employeeId} className={!r.attivo ? "opacity-60" : ""}>
-                    <td className="px-4 py-2.5 font-600 text-slate-900 dark:text-white">
-                      {r.nome}
-                      {!r.attivo && <span className="ml-1 text-xs font-400 text-slate-400">(disattivato)</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{r.shiftCount}</td>
-                    <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{formatDurationHM(r.totalMinutes)}</td>
-                    <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{formatCurrency(r.totalCost)}</td>
-                  </tr>
-                ))}
+                {rows.map((r) => {
+                  const expanded = expandedId === r.employeeId;
+                  const detail = detailByEmployee[r.employeeId];
+                  return (
+                    <React.Fragment key={r.employeeId}>
+                      <tr
+                        className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900 ${!r.attivo ? "opacity-60" : ""}`}
+                        onClick={() => toggleExpand(r.employeeId)}
+                      >
+                        <td className="px-4 py-2.5 font-600 text-slate-900 dark:text-white">
+                          <span className="flex items-center gap-1.5">
+                            {expanded ? (
+                              <ChevronUp size={14} className="shrink-0 text-slate-400" />
+                            ) : (
+                              <ChevronDown size={14} className="shrink-0 text-slate-400" />
+                            )}
+                            {r.nome}
+                            {!r.attivo && <span className="text-xs font-400 text-slate-400">(disattivato)</span>}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{r.shiftCount}</td>
+                        <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{formatDurationHM(r.totalMinutes)}</td>
+                        <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{formatCurrency(r.totalCost)}</td>
+                      </tr>
+                      {expanded && (
+                        <tr>
+                          <td colSpan={4} className="bg-slate-50 px-4 py-3 dark:bg-slate-950">
+                            <div className="flex flex-col gap-1.5">
+                              {detailLoading && !detail ? (
+                                <Spinner size={16} className="text-indigo-600" />
+                              ) : !detail || detail.length === 0 ? (
+                                <p className="text-sm text-slate-500 dark:text-slate-400">Nessun turno trovato.</p>
+                              ) : (
+                                detail.map((s) => (
+                                  <ShiftRow key={s.id} shift={s} onChanged={() => onShiftChanged(r.employeeId)} />
+                                ))
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t border-slate-200 bg-slate-50 font-700 dark:border-slate-800 dark:bg-slate-900">

@@ -1,16 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Wallet, ChevronDown, ChevronUp } from "lucide-react";
 import { getPendingHours, markPaid, getShiftsAdmin } from "../../lib/api";
-import {
-  getRomeTodayISO,
-  formatDateShort,
-  formatTimeHM,
-  minutesBetween,
-  formatDurationHM,
-  formatCurrency,
-  addDaysISO,
-} from "../../lib/time";
+import { getRomeTodayISO, formatDateShort, formatDurationHM, formatCurrency, addDaysISO } from "../../lib/time";
 import { Button, Card, Field, Input, Modal, ErrorText, Spinner, EmptyState } from "../ui";
+import ShiftRow from "./ShiftRow";
 
 const today = getRomeTodayISO();
 
@@ -22,25 +15,7 @@ export default function PendingHours() {
   const [detailByEmployee, setDetailByEmployee] = useState({});
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      setRows(await getPendingHours());
-    } catch (e) {
-      setError(e.message || "Errore nel caricamento.");
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  async function toggleExpand(row) {
-    if (expandedId === row.employeeId) {
-      setExpandedId(null);
-      return;
-    }
-    setExpandedId(row.employeeId);
-    if (detailByEmployee[row.employeeId]) return;
+  const loadDetail = useCallback(async (row) => {
     setDetailLoading(true);
     try {
       const shifts = await getShiftsAdmin({
@@ -53,6 +28,42 @@ export default function PendingHours() {
     } finally {
       setDetailLoading(false);
     }
+  }, []);
+
+  // Ricarica i totali; se un dipendente è espanso, aggiorna anche il suo
+  // dettaglio con il "pagato fino al" più recente (es. dopo un pagamento
+  // registrato, cambia il periodo da mostrare).
+  const load = useCallback(async () => {
+    try {
+      const data = await getPendingHours();
+      setRows(data);
+      if (expandedId) {
+        const row = data.find((r) => r.employeeId === expandedId);
+        if (row) loadDetail(row);
+      }
+    } catch (e) {
+      setError(e.message || "Errore nel caricamento.");
+    }
+  }, [expandedId, loadDetail]);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function toggleExpand(row) {
+    if (expandedId === row.employeeId) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(row.employeeId);
+    if (!detailByEmployee[row.employeeId]) loadDetail(row);
+  }
+
+  // Dopo una modifica/eliminazione il totale ore/costo può essere
+  // cambiato: ricarico sia il dettaglio del dipendente sia i totali.
+  async function onShiftChanged(row) {
+    await Promise.all([loadDetail(row), load()]);
   }
 
   if (!rows) {
@@ -118,17 +129,7 @@ export default function PendingHours() {
                     ) : !detail || detail.length === 0 ? (
                       <p className="text-sm text-slate-500 dark:text-slate-400">Nessun turno trovato.</p>
                     ) : (
-                      detail.map((s) => (
-                        <div key={s.id} className="flex items-center justify-between text-sm">
-                          <span className="text-slate-600 dark:text-slate-300">{formatDateShort(s.date)}</span>
-                          <span className="text-slate-500 dark:text-slate-400">
-                            {formatTimeHM(s.startTime)} – {formatTimeHM(s.endTime)}
-                          </span>
-                          <span className="font-600 text-slate-700 dark:text-slate-200">
-                            {formatDurationHM(minutesBetween(s.startTime, s.endTime))}
-                          </span>
-                        </div>
-                      ))
+                      detail.map((s) => <ShiftRow key={s.id} shift={s} onChanged={() => onShiftChanged(r)} />)
                     )}
                   </div>
                 )}
