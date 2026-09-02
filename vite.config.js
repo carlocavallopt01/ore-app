@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["apple-touch-icon.png", "favicon.svg"],
+      includeAssets: ["apple-touch-icon.png", "favicon.ico"],
       manifest: {
         name: "ORE",
         short_name: "ORE",
