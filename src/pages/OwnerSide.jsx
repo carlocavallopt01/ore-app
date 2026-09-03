@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { ChevronLeft, Lock, Settings, Users, Clock, Inbox, Wallet, CalendarRange } from "lucide-react";
 import { verifyOwnerCode, setOwnerCode, getEditRequestsAdmin, getAbsenceRequestsAdmin } from "../lib/api";
 import ThemeToggle from "../components/ThemeToggle";
+import RefreshButton from "../components/RefreshButton";
 import PinPad from "../components/PinPad";
 import { Button, Modal, Field, Input, ErrorText, Spinner } from "../components/ui";
 import EmployeesAdmin from "../components/owner/EmployeesAdmin";
@@ -78,7 +79,10 @@ export default function OwnerSide({ navigate }) {
             <button onClick={() => navigate("/")} className="flex items-center gap-1 text-sm font-600 text-slate-500 dark:text-slate-400">
               <ChevronLeft size={16} /> Torna alla timbratura
             </button>
-            <ThemeToggle />
+            <div className="flex items-center gap-2">
+              <RefreshButton />
+              <ThemeToggle />
+            </div>
           </div>
           <h1 className="mb-1 text-xl font-700 text-slate-900 dark:text-white">Area Titolare</h1>
           <p className="mb-8 text-sm text-slate-500 dark:text-slate-400">Inserisci il codice a 6 cifre</p>
@@ -99,6 +103,7 @@ export default function OwnerSide({ navigate }) {
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-xl font-700 text-slate-900 dark:text-white">Area Titolare</h1>
           <div className="flex items-center gap-2">
+            <RefreshButton />
             <ThemeToggle />
             <button
               onClick={() => setShowSettings(true)}

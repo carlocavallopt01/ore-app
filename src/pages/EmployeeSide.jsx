@@ -13,6 +13,7 @@ import {
 } from "../lib/api";
 import { getRomeTodayISO, formatDateLong, formatDateShort, formatTimeHM, minutesBetween, formatDurationHM } from "../lib/time";
 import ThemeToggle from "../components/ThemeToggle";
+import RefreshButton from "../components/RefreshButton";
 import PinPad from "../components/PinPad";
 import { Button, Card, Field, Input, Textarea, Modal, ErrorText, EmptyState, Spinner } from "../components/ui";
 
@@ -272,7 +273,8 @@ function Shell({ children, footer, navigate }) {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
       <div className="mx-auto flex max-w-lg flex-col px-4 pb-24 pt-6 sm:pt-10">
-        <div className="mb-4 flex justify-end">
+        <div className="mb-4 flex justify-end gap-2">
+          <RefreshButton />
           <ThemeToggle />
         </div>
         {children}
