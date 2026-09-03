@@ -452,6 +452,19 @@ as $$
 $$;
 grant execute on function mark_paid(uuid, date) to anon;
 
+-- Annulla un pagamento registrato per errore: le ore fino a quella data
+-- tornano subito a comparire in "Da pagare" (il calcolo si basa sempre
+-- sull'ultimo pagamento rimasto).
+create or replace function admin_delete_payment(p_id uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from payments where id = p_id;
+$$;
+grant execute on function admin_delete_payment(uuid) to anon;
+
 -- Ore/costo non ancora pagati per ogni dipendente attivo, calcolati dal
 -- giorno successivo all'ultimo pagamento registrato (o da sempre, se il
 -- dipendente non è mai stato pagato).

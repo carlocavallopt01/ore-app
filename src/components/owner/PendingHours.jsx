@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Wallet, ChevronDown, ChevronUp } from "lucide-react";
-import { getPendingHours, markPaid, getShiftsAdmin } from "../../lib/api";
+import { Wallet, ChevronDown, ChevronUp, Undo2 } from "lucide-react";
+import { getPendingHours, markPaid, getShiftsAdmin, getPaymentsForEmployee, adminDeletePayment } from "../../lib/api";
 import { getRomeTodayISO, formatDateShort, formatDurationHM, formatCurrency, addDaysISO, nextPaydayISO } from "../../lib/time";
 import { Button, Card, Field, Input, Modal, ErrorText, Spinner, EmptyState } from "../ui";
 import ShiftRow from "./ShiftRow";
@@ -13,22 +13,41 @@ export default function PendingHours() {
   const [payingFor, setPayingFor] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [detailByEmployee, setDetailByEmployee] = useState({});
+  const [paymentsByEmployee, setPaymentsByEmployee] = useState({});
   const [detailLoading, setDetailLoading] = useState(false);
+  const [undoingId, setUndoingId] = useState(null);
 
   const loadDetail = useCallback(async (row) => {
     setDetailLoading(true);
     try {
-      const shifts = await getShiftsAdmin({
-        employeeId: row.employeeId,
-        dateFrom: row.fromDate ? addDaysISO(row.fromDate, 1) : undefined,
-      });
+      const [shifts, payments] = await Promise.all([
+        getShiftsAdmin({
+          employeeId: row.employeeId,
+          dateFrom: row.fromDate ? addDaysISO(row.fromDate, 1) : undefined,
+        }),
+        getPaymentsForEmployee(row.employeeId),
+      ]);
       setDetailByEmployee((prev) => ({ ...prev, [row.employeeId]: shifts }));
+      setPaymentsByEmployee((prev) => ({ ...prev, [row.employeeId]: payments }));
     } catch (e) {
       setError(e.message || "Errore nel caricamento dei turni.");
     } finally {
       setDetailLoading(false);
     }
   }, []);
+
+  async function undoPayment(payment, row) {
+    if (!confirm(`Annullare il pagamento fino al ${formatDateShort(payment.dateTo)}? Quelle ore torneranno visibili come da pagare.`)) return;
+    setUndoingId(payment.id);
+    try {
+      await adminDeletePayment(payment.id);
+      await onShiftChanged(row);
+    } catch (e) {
+      setError(e.message || "Errore nell'annullamento del pagamento.");
+    } finally {
+      setUndoingId(null);
+    }
+  }
 
   // Ricarica i totali; se un dipendente è espanso, aggiorna anche il suo
   // dettaglio con il "pagato fino al" più recente (es. dopo un pagamento
@@ -92,14 +111,14 @@ export default function PendingHours() {
           {rows.map((r) => {
             const expanded = expandedId === r.employeeId;
             const detail = detailByEmployee[r.employeeId];
+            const payments = paymentsByEmployee[r.employeeId];
             return (
               <Card key={r.employeeId} className="p-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <button
                     type="button"
                     onClick={() => toggleExpand(r)}
-                    disabled={r.totalMinutes === 0}
-                    className="flex flex-1 items-center justify-between gap-2 text-left disabled:cursor-default"
+                    className="flex flex-1 items-center justify-between gap-2 text-left"
                   >
                     <div>
                       <p className="font-600 text-slate-900 dark:text-white">{r.nome}</p>
@@ -111,12 +130,11 @@ export default function PendingHours() {
                         {(r.payday === 0 || r.payday) && ` · prossima paga: ${formatDateShort(nextPaydayISO(r.payday))}`}
                       </p>
                     </div>
-                    {r.totalMinutes > 0 &&
-                      (expanded ? (
-                        <ChevronUp size={16} className="shrink-0 text-slate-400" />
-                      ) : (
-                        <ChevronDown size={16} className="shrink-0 text-slate-400" />
-                      ))}
+                    {expanded ? (
+                      <ChevronUp size={16} className="shrink-0 text-slate-400" />
+                    ) : (
+                      <ChevronDown size={16} className="shrink-0 text-slate-400" />
+                    )}
                   </button>
                   <Button variant="secondary" size="sm" disabled={r.totalMinutes === 0} onClick={() => setPayingFor(r)}>
                     <Wallet size={14} /> Segna come pagato
@@ -124,14 +142,40 @@ export default function PendingHours() {
                 </div>
 
                 {expanded && (
-                  <div className="mt-3 flex flex-col gap-1.5 border-t border-slate-200 pt-3 dark:border-slate-800">
-                    {detailLoading && !detail ? (
-                      <Spinner size={16} className="text-indigo-600" />
-                    ) : !detail || detail.length === 0 ? (
-                      <p className="text-sm text-slate-500 dark:text-slate-400">Nessun turno trovato.</p>
-                    ) : (
-                      detail.map((s) => <ShiftRow key={s.id} shift={s} onChanged={() => onShiftChanged(r)} />)
-                    )}
+                  <div className="mt-3 flex flex-col gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-xs font-700 uppercase text-slate-500 dark:text-slate-400">Turni da pagare</p>
+                      {detailLoading && !detail ? (
+                        <Spinner size={16} className="text-indigo-600" />
+                      ) : !detail || detail.length === 0 ? (
+                        <p className="text-sm text-slate-500 dark:text-slate-400">Nessun turno trovato.</p>
+                      ) : (
+                        detail.map((s) => <ShiftRow key={s.id} shift={s} onChanged={() => onShiftChanged(r)} />)
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-xs font-700 uppercase text-slate-500 dark:text-slate-400">Pagamenti registrati</p>
+                      {detailLoading && !payments ? (
+                        <Spinner size={16} className="text-indigo-600" />
+                      ) : !payments || payments.length === 0 ? (
+                        <p className="text-sm text-slate-500 dark:text-slate-400">Nessun pagamento registrato.</p>
+                      ) : (
+                        payments.map((p) => (
+                          <div key={p.id} className="flex items-center justify-between text-sm">
+                            <span className="text-slate-600 dark:text-slate-300">Pagato fino al {formatDateShort(p.dateTo)}</span>
+                            <button
+                              onClick={() => undoPayment(p, r)}
+                              disabled={undoingId === p.id}
+                              title="Annulla questo pagamento"
+                              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+                            >
+                              {undoingId === p.id ? <Spinner size={13} /> : <Undo2 size={13} />} Annulla
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 )}
               </Card>

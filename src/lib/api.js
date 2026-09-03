@@ -316,6 +316,21 @@ export async function markPaid(employeeId, dateTo) {
   if (error) throw error;
 }
 
+export async function getPaymentsForEmployee(employeeId) {
+  const { data, error } = await supabase
+    .from("payments")
+    .select("*")
+    .eq("employee_id", employeeId)
+    .order("date_to", { ascending: false });
+  if (error) throw error;
+  return data.map((p) => ({ id: p.id, employeeId: p.employee_id, dateTo: p.date_to, paidAt: p.paid_at }));
+}
+
+export async function adminDeletePayment(id) {
+  const { error } = await supabase.rpc("admin_delete_payment", { p_id: id });
+  if (error) throw error;
+}
+
 export async function getMonthlySummary(year, month) {
   const { data, error } = await supabase.rpc("get_monthly_summary", { p_year: year, p_month: month });
   if (error) throw error;
