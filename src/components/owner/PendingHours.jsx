@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Wallet, ChevronDown, ChevronUp } from "lucide-react";
 import { getPendingHours, markPaid, getShiftsAdmin } from "../../lib/api";
-import { getRomeTodayISO, formatDateShort, formatDurationHM, formatCurrency, addDaysISO } from "../../lib/time";
+import { getRomeTodayISO, formatDateShort, formatDurationHM, formatCurrency, addDaysISO, nextPaydayISO } from "../../lib/time";
 import { Button, Card, Field, Input, Modal, ErrorText, Spinner, EmptyState } from "../ui";
 import ShiftRow from "./ShiftRow";
 
@@ -108,6 +108,7 @@ export default function PendingHours() {
                       </p>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         dal {r.fromDate ? formatDateShort(r.fromDate) : "sempre"}
+                        {(r.payday === 0 || r.payday) && ` · prossima paga: ${formatDateShort(nextPaydayISO(r.payday))}`}
                       </p>
                     </div>
                     {r.totalMinutes > 0 &&

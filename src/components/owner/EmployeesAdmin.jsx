@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Plus, PencilLine } from "lucide-react";
 import { getEmployeesAdmin, saveEmployee } from "../../lib/api";
-import { formatCurrency } from "../../lib/time";
-import { Button, Card, Field, Input, Modal, ErrorText, Spinner, Badge, EmptyState } from "../ui";
+import { formatCurrency, paydayLabel } from "../../lib/time";
+import { Button, Card, Field, Input, Select, Modal, ErrorText, Spinner, Badge, EmptyState } from "../ui";
+
+const PAYDAY_OPTIONS = [
+  { value: "", label: "Non impostato" },
+  { value: "0", label: "Fine mese" },
+  ...Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `Giorno ${i + 1}` })),
+];
 
 function randomPin() {
   return String(Math.floor(1000 + Math.random() * 9000));
@@ -31,7 +37,7 @@ export default function EmployeesAdmin() {
   return (
     <div className="flex flex-col gap-6">
       <ErrorText>{error}</ErrorText>
-      <Button className="self-start" onClick={() => setEditing({ nome: "", pin: randomPin(), hourlyRate: 0, attivo: true })}>
+      <Button className="self-start" onClick={() => setEditing({ nome: "", pin: randomPin(), hourlyRate: 0, payday: null, attivo: true })}>
         <Plus size={16} /> Nuovo dipendente
       </Button>
 
@@ -74,12 +80,14 @@ function Section({ title, items, onEdit, empty }) {
                 <p className="font-600 text-slate-900 dark:text-white">{e.nome}</p>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   PIN {e.pin} · {formatCurrency(e.hourlyRate)}/h
+                  {(e.payday === 0 || e.payday) && ` · Paga: ${paydayLabel(e.payday)}`}
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 {!e.attivo && <Badge tone="slate">Disattivato</Badge>}
                 <button
                   onClick={() => onEdit(e)}
+                  title="Modifica dipendente"
                   className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
                 >
                   <PencilLine size={16} />
@@ -98,6 +106,7 @@ function EmployeeFormModal({ employee, onClose, onSaved }) {
   const [nome, setNome] = useState(employee.nome);
   const [pin, setPin] = useState(employee.pin);
   const [hourlyRate, setHourlyRate] = useState(String(employee.hourlyRate));
+  const [payday, setPayday] = useState(employee.payday === null || employee.payday === undefined ? "" : String(employee.payday));
   const [attivo, setAttivo] = useState(employee.attivo);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -111,7 +120,14 @@ function EmployeeFormModal({ employee, onClose, onSaved }) {
     setSaving(true);
     setError("");
     try {
-      await saveEmployee({ id: employee.id, nome: nome.trim(), pin, hourlyRate: rate, attivo });
+      await saveEmployee({
+        id: employee.id,
+        nome: nome.trim(),
+        pin,
+        hourlyRate: rate,
+        attivo,
+        payday: payday === "" ? null : Number(payday),
+      });
       onSaved();
     } catch (e) {
       if (e.code === "23505" || /duplicate|unique/i.test(e.message || "")) {
@@ -141,6 +157,15 @@ function EmployeeFormModal({ employee, onClose, onSaved }) {
         </Field>
         <Field label="Costo orario (€)" hint="Non è mai visibile al dipendente.">
           <Input inputMode="decimal" value={hourlyRate} onChange={(e) => setHourlyRate(e.target.value)} required />
+        </Field>
+        <Field label="Giorno di paga previsto" hint="Solo promemoria: non cambia il calcolo delle ore da pagare.">
+          <Select value={payday} onChange={(e) => setPayday(e.target.value)}>
+            {PAYDAY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
         </Field>
         {!isNew && (
           <label className="flex items-center gap-2 text-sm font-600 text-slate-700 dark:text-slate-300">

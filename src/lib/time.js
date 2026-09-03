@@ -113,3 +113,34 @@ export function addDaysISO(isoDate, days) {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+
+function daysInMonth(year, month) {
+  // Giorno 0 del mese successivo (1-indicizzato) = ultimo giorno del mese richiesto.
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+// Prossima data di paga a partire da `payday` (0 = fine mese, 1-31 = giorno
+// del mese, con clamp sui mesi più corti), calcolata dalla data indicata
+// (o da oggi). Puramente informativo: non incide sul calcolo delle ore.
+export function nextPaydayISO(payday, fromISO = getRomeTodayISO()) {
+  if (payday === null || payday === undefined) return null;
+  const [y, m] = fromISO.split("-").map(Number);
+
+  function candidateFor(year, month) {
+    const last = daysInMonth(year, month);
+    const day = payday === 0 ? last : Math.min(payday, last);
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  const thisMonth = candidateFor(y, m);
+  if (thisMonth >= fromISO) return thisMonth;
+
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? y + 1 : y;
+  return candidateFor(nextYear, nextMonth);
+}
+
+export function paydayLabel(payday) {
+  if (payday === null || payday === undefined) return "";
+  return payday === 0 ? "Fine mese" : `Giorno ${payday}`;
+}

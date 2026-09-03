@@ -24,14 +24,23 @@ create extension if not exists "pgcrypto";
 -- ---------------------------------------------------------------------
 -- Tabella dipendenti
 -- ---------------------------------------------------------------------
+-- payday: giorno del mese previsto per il pagamento (1-31), oppure 0 per
+-- "fine mese" (l'app calcola l'ultimo giorno del mese, con clamp se il
+-- numero scelto supera i giorni del mese, es. 31 in un mese da 30). Solo
+-- informativo/promemoria: non influenza il calcolo delle ore da pagare.
 create table if not exists employees (
   id uuid primary key default gen_random_uuid(),
   nome text not null,
   pin text not null check (pin ~ '^[0-9]{4}$'),
   hourly_rate numeric not null default 0 check (hourly_rate >= 0),
+  payday int check (payday is null or (payday >= 0 and payday <= 31)),
   attivo boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+alter table employees add column if not exists payday int;
+alter table employees drop constraint if exists employees_payday_check;
+alter table employees add constraint employees_payday_check check (payday is null or (payday >= 0 and payday <= 31));
 
 -- PIN univoco solo tra i dipendenti attivi: un dipendente disattivato
 -- libera il proprio PIN per il riutilizzo.
@@ -273,12 +282,17 @@ as $$
 $$;
 grant execute on function get_employees_admin() to anon;
 
+-- Firma precedente (senza giorno di paga): rimossa per evitare ambiguità
+-- con quella nuova a 6 argomenti, che ha un default sull'ultimo.
+drop function if exists admin_save_employee(uuid, text, text, numeric, boolean);
+
 create or replace function admin_save_employee(
   p_id uuid,
   p_nome text,
   p_pin text,
   p_hourly_rate numeric,
-  p_attivo boolean
+  p_attivo boolean,
+  p_payday int default null
 )
 returns uuid
 language plpgsql
@@ -289,19 +303,19 @@ declare
   v_id uuid;
 begin
   if p_id is null then
-    insert into employees (nome, pin, hourly_rate, attivo)
-    values (trim(p_nome), p_pin, p_hourly_rate, p_attivo)
+    insert into employees (nome, pin, hourly_rate, attivo, payday)
+    values (trim(p_nome), p_pin, p_hourly_rate, p_attivo, p_payday)
     returning id into v_id;
   else
     update employees
-      set nome = trim(p_nome), pin = p_pin, hourly_rate = p_hourly_rate, attivo = p_attivo
+      set nome = trim(p_nome), pin = p_pin, hourly_rate = p_hourly_rate, attivo = p_attivo, payday = p_payday
       where id = p_id
       returning id into v_id;
   end if;
   return v_id;
 end;
 $$;
-grant execute on function admin_save_employee(uuid, text, text, numeric, boolean) to anon;
+grant execute on function admin_save_employee(uuid, text, text, numeric, boolean, int) to anon;
 
 -- ---------------------------------------------------------------------
 -- Funzioni RPC: gestione turni da parte del Titolare
@@ -441,11 +455,16 @@ grant execute on function mark_paid(uuid, date) to anon;
 -- Ore/costo non ancora pagati per ogni dipendente attivo, calcolati dal
 -- giorno successivo all'ultimo pagamento registrato (o da sempre, se il
 -- dipendente non è mai stato pagato).
+-- Cambiare le colonne restituite richiede di eliminare prima la funzione
+-- esistente (CREATE OR REPLACE non permette di cambiare il RETURNS TABLE).
+drop function if exists get_pending_hours();
+
 create or replace function get_pending_hours()
 returns table (
   employee_id uuid,
   nome text,
   hourly_rate numeric,
+  payday int,
   from_date date,
   total_minutes bigint,
   total_hours numeric,
@@ -459,6 +478,7 @@ as $$
     e.id,
     e.nome,
     e.hourly_rate,
+    e.payday,
     p.last_paid,
     coalesce(sum(extract(epoch from (s.end_time - s.start_time)) / 60), 0)::bigint,
     round(coalesce(sum(extract(epoch from (s.end_time - s.start_time)) / 60), 0) / 60.0, 2),
@@ -471,7 +491,7 @@ as $$
     on s.employee_id = e.id
     and (p.last_paid is null or s.date > p.last_paid)
   where e.attivo = true
-  group by e.id, e.nome, e.hourly_rate, p.last_paid
+  group by e.id, e.nome, e.hourly_rate, e.payday, p.last_paid
   order by e.nome;
 $$;
 grant execute on function get_pending_hours() to anon;

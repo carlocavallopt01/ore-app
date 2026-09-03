@@ -6,6 +6,7 @@ function mapEmployee(row) {
     nome: row.nome,
     pin: row.pin,
     hourlyRate: Number(row.hourly_rate) || 0,
+    payday: row.payday === null || row.payday === undefined ? null : Number(row.payday),
     attivo: row.attivo,
     createdAt: row.created_at,
   };
@@ -66,6 +67,7 @@ function mapPendingHours(row) {
     employeeId: row.employee_id,
     nome: row.nome,
     hourlyRate: Number(row.hourly_rate) || 0,
+    payday: row.payday === null || row.payday === undefined ? null : Number(row.payday),
     fromDate: row.from_date,
     totalMinutes: Number(row.total_minutes) || 0,
     totalHours: Number(row.total_hours) || 0,
@@ -101,13 +103,15 @@ export async function getEmployeesAdmin() {
   return data.map(mapEmployee);
 }
 
-export async function saveEmployee({ id, nome, pin, hourlyRate, attivo }) {
+// payday: null (non impostato), 0 (fine mese), 1-31 (giorno del mese).
+export async function saveEmployee({ id, nome, pin, hourlyRate, attivo, payday }) {
   const { data, error } = await supabase.rpc("admin_save_employee", {
     p_id: id || null,
     p_nome: nome,
     p_pin: pin,
     p_hourly_rate: hourlyRate,
     p_attivo: attivo,
+    p_payday: payday === undefined ? null : payday,
   });
   if (error) throw error;
   return data;
