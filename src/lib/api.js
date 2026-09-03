@@ -331,6 +331,11 @@ export async function adminDeletePayment(id) {
   if (error) throw error;
 }
 
+export async function adminUpdatePayment(id, dateTo) {
+  const { error } = await supabase.rpc("admin_update_payment", { p_id: id, p_date_to: dateTo });
+  if (error) throw error;
+}
+
 export async function getMonthlySummary(year, month) {
   const { data, error } = await supabase.rpc("get_monthly_summary", { p_year: year, p_month: month });
   if (error) throw error;

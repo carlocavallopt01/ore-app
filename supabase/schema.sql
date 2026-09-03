@@ -465,6 +465,18 @@ as $$
 $$;
 grant execute on function admin_delete_payment(uuid) to anon;
 
+-- Corregge la data di un pagamento già registrato, senza doverlo prima
+-- annullare e poi rifare da capo.
+create or replace function admin_update_payment(p_id uuid, p_date_to date)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update payments set date_to = p_date_to where id = p_id;
+$$;
+grant execute on function admin_update_payment(uuid, date) to anon;
+
 -- Ore/costo non ancora pagati per ogni dipendente attivo, calcolati dal
 -- giorno successivo all'ultimo pagamento registrato (o da sempre, se il
 -- dipendente non è mai stato pagato).

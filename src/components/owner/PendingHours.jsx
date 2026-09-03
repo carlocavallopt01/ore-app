@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Wallet, ChevronDown, ChevronUp, Undo2 } from "lucide-react";
-import { getPendingHours, markPaid, getShiftsAdmin, getPaymentsForEmployee, adminDeletePayment } from "../../lib/api";
+import { Wallet, ChevronDown, ChevronUp, Undo2, PencilLine, Check, X } from "lucide-react";
+import {
+  getPendingHours,
+  markPaid,
+  getShiftsAdmin,
+  getPaymentsForEmployee,
+  adminDeletePayment,
+  adminUpdatePayment,
+} from "../../lib/api";
 import { getRomeTodayISO, formatDateShort, formatDurationHM, formatCurrency, addDaysISO, nextPaydayISO } from "../../lib/time";
 import { Button, Card, Field, Input, Modal, ErrorText, Spinner, EmptyState } from "../ui";
 import ShiftRow from "./ShiftRow";
@@ -15,7 +22,6 @@ export default function PendingHours() {
   const [detailByEmployee, setDetailByEmployee] = useState({});
   const [paymentsByEmployee, setPaymentsByEmployee] = useState({});
   const [detailLoading, setDetailLoading] = useState(false);
-  const [undoingId, setUndoingId] = useState(null);
 
   const loadDetail = useCallback(async (row) => {
     setDetailLoading(true);
@@ -35,19 +41,6 @@ export default function PendingHours() {
       setDetailLoading(false);
     }
   }, []);
-
-  async function undoPayment(payment, row) {
-    if (!confirm(`Annullare il pagamento fino al ${formatDateShort(payment.dateTo)}? Quelle ore torneranno visibili come da pagare.`)) return;
-    setUndoingId(payment.id);
-    try {
-      await adminDeletePayment(payment.id);
-      await onShiftChanged(row);
-    } catch (e) {
-      setError(e.message || "Errore nell'annullamento del pagamento.");
-    } finally {
-      setUndoingId(null);
-    }
-  }
 
   // Ricarica i totali; se un dipendente è espanso, aggiorna anche il suo
   // dettaglio con il "pagato fino al" più recente (es. dopo un pagamento
@@ -161,19 +154,7 @@ export default function PendingHours() {
                       ) : !payments || payments.length === 0 ? (
                         <p className="text-sm text-slate-500 dark:text-slate-400">Nessun pagamento registrato.</p>
                       ) : (
-                        payments.map((p) => (
-                          <div key={p.id} className="flex items-center justify-between text-sm">
-                            <span className="text-slate-600 dark:text-slate-300">Pagato fino al {formatDateShort(p.dateTo)}</span>
-                            <button
-                              onClick={() => undoPayment(p, r)}
-                              disabled={undoingId === p.id}
-                              title="Annulla questo pagamento"
-                              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
-                            >
-                              {undoingId === p.id ? <Spinner size={13} /> : <Undo2 size={13} />} Annulla
-                            </button>
-                          </div>
-                        ))
+                        payments.map((p) => <PaymentRow key={p.id} payment={p} onChanged={() => onShiftChanged(r)} />)
                       )}
                     </div>
                   </div>
@@ -244,5 +225,79 @@ function MarkPaidModal({ row, onClose, onSaved }) {
         <ErrorText>{error}</ErrorText>
       </div>
     </Modal>
+  );
+}
+
+function PaymentRow({ payment, onChanged }) {
+  const [editing, setEditing] = useState(false);
+  const [dateTo, setDateTo] = useState(payment.dateTo);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await adminUpdatePayment(payment.id, dateTo);
+      setEditing(false);
+      onChanged();
+    } catch (e) {
+      setError(e.message || "Errore nel salvataggio.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!confirm(`Annullare il pagamento fino al ${formatDateShort(payment.dateTo)}? Quelle ore torneranno visibili come da pagare.`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      await adminDeletePayment(payment.id);
+      onChanged();
+    } catch (e) {
+      setError(e.message || "Errore nell'eliminazione.");
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+        <div className="flex items-center gap-2">
+          <Input type="date" value={dateTo} max={today} onChange={(e) => setDateTo(e.target.value)} className="flex-1" />
+          <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>
+            <X size={14} />
+          </Button>
+          <Button size="sm" disabled={saving} onClick={save}>
+            {saving ? <Spinner size={14} /> : <Check size={14} />}
+          </Button>
+        </div>
+        <ErrorText>{error}</ErrorText>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between text-sm">
+      <span className="text-slate-600 dark:text-slate-300">Pagato fino al {formatDateShort(payment.dateTo)}</span>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => setEditing(true)}
+          title="Modifica data pagamento"
+          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <PencilLine size={13} />
+        </button>
+        <button
+          onClick={remove}
+          disabled={saving}
+          title="Annulla questo pagamento"
+          className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+        >
+          {saving ? <Spinner size={13} /> : <Undo2 size={13} />} Annulla
+        </button>
+      </div>
+    </div>
   );
 }
