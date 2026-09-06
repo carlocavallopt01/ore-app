@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, Lock, Settings, Users, Clock, Inbox, Wallet, CalendarRange } from "lucide-react";
+import { ChevronLeft, Lock, Settings, Users, Clock, Inbox, Wallet, CalendarRange, Eye, EyeOff } from "lucide-react";
 import {
   verifyOwnerCode,
   setOwnerCode,
@@ -228,11 +228,12 @@ function OwnerCodeSection() {
 function NotificationsSection() {
   const [email, setEmail] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const [hasKey, setHasKey] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [done, setDone] = useState(false);
+  const [doneMessage, setDoneMessage] = useState("");
 
   useEffect(() => {
     Promise.all([getNotificationEmail(), hasResendApiKey()])
@@ -248,15 +249,17 @@ function NotificationsSection() {
     e.preventDefault();
     setSaving(true);
     setError("");
-    setDone(false);
+    setDoneMessage("");
     try {
       await setNotificationEmail(email.trim());
       if (apiKey.trim()) {
         await setResendApiKey(apiKey.trim());
         setHasKey(true);
         setApiKey("");
+        setDoneMessage("Email e chiave API salvate.");
+      } else {
+        setDoneMessage("Email salvata. Chiave API lasciata invariata (campo vuoto).");
       }
-      setDone(true);
     } catch (e) {
       setError(e.message || "Errore nel salvataggio.");
     } finally {
@@ -286,15 +289,29 @@ function NotificationsSection() {
             label="Chiave API Resend"
             hint={hasKey ? "Già impostata — lascia vuoto per non cambiarla." : "Non ancora impostata."}
           >
-            <Input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={hasKey ? "••••••••••••" : "re_xxxxxxxxxxxxxxxx"}
-              autoComplete="off"
-            />
+            <div className="relative">
+              <Input
+                type={showApiKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={hasKey ? "(vuoto = non cambiare)" : "re_xxxxxxxxxxxxxxxx"}
+                autoComplete="off"
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey((v) => !v)}
+                tabIndex={-1}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            {apiKey && (
+              <p className="text-xs text-slate-500 dark:text-slate-400">{apiKey.length} caratteri inseriti.</p>
+            )}
           </Field>
-          {done && <p className="text-sm text-emerald-700 dark:text-emerald-400">Impostazioni notifiche salvate.</p>}
+          {doneMessage && <p className="text-sm text-emerald-700 dark:text-emerald-400">{doneMessage}</p>}
           <ErrorText>{error}</ErrorText>
           <Button type="submit" disabled={saving}>
             {saving ? <Spinner size={16} /> : "Salva notifiche"}
