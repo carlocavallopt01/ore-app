@@ -141,6 +141,31 @@ export async function setOwnerCode(code) {
 }
 
 // ---------------------------------------------------------------------
+// Notifiche email al Titolare (facoltative)
+// ---------------------------------------------------------------------
+export async function getNotificationEmail() {
+  const { data, error } = await supabase.rpc("get_notification_email");
+  if (error) throw error;
+  return data || "";
+}
+
+export async function setNotificationEmail(email) {
+  const { error } = await supabase.rpc("set_notification_email", { p_email: email });
+  if (error) throw error;
+}
+
+export async function hasResendApiKey() {
+  const { data, error } = await supabase.rpc("has_resend_api_key");
+  if (error) throw error;
+  return Boolean(data);
+}
+
+export async function setResendApiKey(key) {
+  const { error } = await supabase.rpc("set_resend_api_key", { p_key: key });
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
 // Turni
 // ---------------------------------------------------------------------
 export async function getShiftsForEmployeeDate(employeeId, date) {

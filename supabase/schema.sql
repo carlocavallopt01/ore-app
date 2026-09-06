@@ -558,6 +558,156 @@ $$;
 grant execute on function get_monthly_summary(int, int) to anon;
 
 -- ---------------------------------------------------------------------
+-- Notifiche email al Titolare per le nuove richieste (facoltativo:
+-- funziona solo se email e chiave Resend sono impostate dalle
+-- Impostazioni; altrimenti le funzioni sotto non fanno nulla).
+-- Invio tramite Resend (resend.com) via l'estensione pg_net, già
+-- disponibile su Supabase: una singola chiamata HTTP asincrona, che non
+-- blocca né fa fallire la richiesta del dipendente se non è configurata
+-- o se l'invio fallisce.
+-- ---------------------------------------------------------------------
+create extension if not exists pg_net;
+
+create or replace function set_notification_email(p_email text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into settings (key, value) values ('notification_email', jsonb_build_object('email', p_email))
+  on conflict (key) do update set value = excluded.value;
+$$;
+grant execute on function set_notification_email(text) to anon;
+
+create or replace function get_notification_email()
+returns text
+language sql
+security definer
+set search_path = public
+as $$
+  select value->>'email' from settings where key = 'notification_email';
+$$;
+grant execute on function get_notification_email() to anon;
+
+-- La chiave Resend è scrivibile ma mai restituita in chiaro: solo
+-- has_resend_api_key() dice se risulta impostata (stesso principio dei
+-- PIN e del codice Titolare).
+create or replace function set_resend_api_key(p_key text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into settings (key, value) values ('resend_api_key', jsonb_build_object('key', p_key))
+  on conflict (key) do update set value = excluded.value;
+$$;
+grant execute on function set_resend_api_key(text) to anon;
+
+create or replace function has_resend_api_key()
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from settings where key = 'resend_api_key' and coalesce(value->>'key', '') != ''
+  );
+$$;
+grant execute on function has_resend_api_key() to anon;
+
+create or replace function notify_owner(p_subject text, p_html text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_key text;
+  v_email text;
+begin
+  select value->>'key' into v_key from settings where key = 'resend_api_key';
+  select value->>'email' into v_email from settings where key = 'notification_email';
+  if coalesce(v_key, '') = '' or coalesce(v_email, '') = '' then
+    return;
+  end if;
+  begin
+    perform net.http_post(
+      url := 'https://api.resend.com/emails',
+      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key),
+      body := jsonb_build_object(
+        'from', 'ORE <onboarding@resend.dev>',
+        'to', jsonb_build_array(v_email),
+        'subject', p_subject,
+        'html', p_html
+      )
+    );
+  exception when others then
+    null;
+  end;
+end;
+$$;
+grant execute on function notify_owner(text, text) to anon;
+
+create or replace function notify_edit_request()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_nome text;
+  v_subject text;
+  v_html text;
+begin
+  select nome into v_nome from employees where id = new.employee_id;
+  if new.shift_id is not null then
+    v_subject := 'ORE: richiesta di modifica turno da ' || coalesce(v_nome, 'un dipendente');
+    v_html := '<p><b>' || coalesce(v_nome, 'Un dipendente') || '</b> ha richiesto la modifica di un turno.</p>'
+      || '<p>Motivo: ' || coalesce(new.motivo, '') || '</p>';
+  else
+    v_subject := 'ORE: nuovo turno proposto da ' || coalesce(v_nome, 'un dipendente');
+    v_html := '<p><b>' || coalesce(v_nome, 'Un dipendente') || '</b> ha proposto un turno per il '
+      || to_char(new.proposed_date, 'DD/MM/YYYY') || ' (' || new.proposed_start_time || '–' || new.proposed_end_time || ').</p>'
+      || '<p>Nota: ' || coalesce(new.motivo, '(nessuna)') || '</p>';
+  end if;
+  perform notify_owner(v_subject, v_html);
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_notify_edit_request on edit_requests;
+create trigger trg_notify_edit_request
+  after insert on edit_requests
+  for each row execute function notify_edit_request();
+
+create or replace function notify_absence_request()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_nome text;
+  v_subject text;
+  v_html text;
+begin
+  select nome into v_nome from employees where id = new.employee_id;
+  v_subject := 'ORE: richiesta di assenza da ' || coalesce(v_nome, 'un dipendente');
+  v_html := '<p><b>' || coalesce(v_nome, 'Un dipendente') || '</b> ha richiesto un''assenza dal '
+    || to_char(new.date_from, 'DD/MM/YYYY') || ' al ' || to_char(new.date_to, 'DD/MM/YYYY') || '.</p>'
+    || '<p>' || (case when new.intera_giornata then 'Giornata intera' else 'Dalle ' || new.time_from || ' alle ' || new.time_to end) || '</p>'
+    || '<p>Motivo: ' || coalesce(new.motivo, '(nessuno)') || '</p>';
+  perform notify_owner(v_subject, v_html);
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_notify_absence_request on absence_requests;
+create trigger trg_notify_absence_request
+  after insert on absence_requests
+  for each row execute function notify_absence_request();
+
+-- ---------------------------------------------------------------------
 -- Dati iniziali (eseguire una sola volta; ON CONFLICT evita duplicati)
 -- ---------------------------------------------------------------------
 insert into settings (key, value) values

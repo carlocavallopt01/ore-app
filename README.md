@@ -44,12 +44,23 @@ Su iPhone: Safari → icona Condividi → **Aggiungi a Home**. Su Android: Chrom
 
 Le ore vengono calcolate al minuto esatto (nessun arrotondamento). Le date "di oggi" e la soglia chiaro/scuro automatica usano sempre il fuso orario Europe/Rome, indipendentemente dal fuso del dispositivo.
 
-## 5. Note sulla sicurezza dei PIN e del codice Titolare
+## 5. Notifiche email al Titolare (facoltativo)
+
+Per ricevere una email ogni volta che un dipendente invia una richiesta (modifica turno, nuovo turno passato, assenza):
+
+1. Crea un account gratuito su [resend.com](https://resend.com) (fino a 3000 email/mese gratis, nessuna carta richiesta).
+2. Nella dashboard di Resend, vai su **API Keys** → **Create API Key** e copiala (inizia con `re_...`).
+3. Nell'app: Area Titolare → icona ingranaggio → sezione **Notifiche email** → inserisci la tua email e incolla la chiave → **Salva notifiche**.
+
+Da quel momento le email arrivano automaticamente dal database stesso (nessun altro passaggio). Il mittente di default è `onboarding@resend.dev` (va bene per iniziare); per usare un indirizzo del tuo dominio serve verificarlo su Resend, passaggio facoltativo. Se non configuri nulla, l'app funziona esattamente come prima: è tutto opzionale e non blocca mai l'invio di una richiesta da parte del dipendente anche se l'email non parte.
+
+## 6. Note sulla sicurezza dei PIN e del codice Titolare
 
 Come nel progetto Scontrino, l'accesso è tramite PIN/codice condiviso (non ci sono account personali): pensato per un uso interno, non per dati sensibili di alto valore.
 
 - PIN dei dipendenti, costo orario e codice Titolare non sono mai leggibili con una semplice query dal browser: la tabella `employees` non ha alcuna policy di lettura pubblica, la griglia dipendenti usa una vista (`employees_public`) che espone solo id e nome, e la verifica di PIN/codice avviene tramite funzioni del database (RPC) che restituiscono solo "corretto/sbagliato".
 - Un turno salvato dal dipendente non ha una policy di modifica/cancellazione pubblica: il Titolare interviene solo tramite funzioni RPC dedicate (`admin_update_shift`, `admin_delete_shift`), così l'app stessa non può alterare un turno bloccato per errore.
+- La chiave API di Resend (se configurata) segue lo stesso principio dei PIN: si scrive tramite una funzione RPC ma non è mai restituita in chiaro — l'interfaccia sa solo dire "impostata" o "non impostata" (`has_resend_api_key()`), mai il suo valore.
 - Le funzioni riservate al Titolare (gestione dipendenti, turni, richieste, pagamenti) sono comunque richiamabili da chiunque conosca l'URL pubblico del progetto Supabase: la protezione è a livello di interfaccia (serve comunque il codice a 6 cifre per raggiungere quegli schermi), non un vero controllo di accesso lato database.
 
 Per un livello di sicurezza più alto (account personali, permessi differenziati) servirebbe integrare Supabase Auth: è un'estensione possibile in futuro, non necessaria per l'uso interno attuale.

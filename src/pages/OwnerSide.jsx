@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { ChevronLeft, Lock, Settings, Users, Clock, Inbox, Wallet, CalendarRange } from "lucide-react";
-import { verifyOwnerCode, setOwnerCode, getEditRequestsAdmin, getAbsenceRequestsAdmin } from "../lib/api";
+import {
+  verifyOwnerCode,
+  setOwnerCode,
+  getEditRequestsAdmin,
+  getAbsenceRequestsAdmin,
+  getNotificationEmail,
+  setNotificationEmail,
+  hasResendApiKey,
+  setResendApiKey,
+} from "../lib/api";
 import ThemeToggle from "../components/ThemeToggle";
 import RefreshButton from "../components/RefreshButton";
 import PinPad from "../components/PinPad";
@@ -153,12 +162,24 @@ export default function OwnerSide({ navigate }) {
         {tab === "riepilogo" && <MonthlySummary />}
       </div>
 
-      {showSettings && <OwnerCodeModal onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );
 }
 
-function OwnerCodeModal({ onClose }) {
+function SettingsModal({ onClose }) {
+  return (
+    <Modal title="Impostazioni" onClose={onClose}>
+      <div className="flex flex-col gap-8">
+        <OwnerCodeSection />
+        <div className="border-t border-slate-200 dark:border-slate-800" />
+        <NotificationsSection />
+      </div>
+    </Modal>
+  );
+}
+
+function OwnerCodeSection() {
   const [code, setCode] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
@@ -182,12 +203,10 @@ function OwnerCodeModal({ onClose }) {
   }
 
   return (
-    <Modal title="Cambia codice Titolare" onClose={onClose}>
+    <div>
+      <h3 className="mb-3 text-sm font-700 uppercase tracking-wide text-slate-500 dark:text-slate-400">Codice Titolare</h3>
       {done ? (
-        <div className="flex flex-col items-center gap-4 py-4 text-center">
-          <p className="text-sm text-slate-600 dark:text-slate-300">Codice aggiornato con successo.</p>
-          <Button onClick={onClose}>Chiudi</Button>
-        </div>
+        <p className="text-sm text-emerald-700 dark:text-emerald-400">Codice aggiornato con successo.</p>
       ) : (
         <form onSubmit={submit} className="flex flex-col gap-4">
           <Field label="Nuovo codice (6 cifre)">
@@ -202,6 +221,86 @@ function OwnerCodeModal({ onClose }) {
           </Button>
         </form>
       )}
-    </Modal>
+    </div>
+  );
+}
+
+function NotificationsSection() {
+  const [email, setEmail] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [hasKey, setHasKey] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    Promise.all([getNotificationEmail(), hasResendApiKey()])
+      .then(([e, k]) => {
+        setEmail(e);
+        setHasKey(k);
+      })
+      .catch((e) => setError(e.message || "Errore nel caricamento."))
+      .finally(() => setLoaded(true));
+  }, []);
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    setDone(false);
+    try {
+      await setNotificationEmail(email.trim());
+      if (apiKey.trim()) {
+        await setResendApiKey(apiKey.trim());
+        setHasKey(true);
+        setApiKey("");
+      }
+      setDone(true);
+    } catch (e) {
+      setError(e.message || "Errore nel salvataggio.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <h3 className="mb-1 text-sm font-700 uppercase tracking-wide text-slate-500 dark:text-slate-400">Notifiche email</h3>
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        Ricevi una email ogni volta che un dipendente invia una richiesta (modifica turno, nuovo turno passato, assenza).
+        Serve una chiave API di{" "}
+        <a href="https://resend.com" target="_blank" rel="noreferrer" className="underline">
+          Resend
+        </a>{" "}
+        (gratis fino a 3000 email/mese).
+      </p>
+      {!loaded ? (
+        <Spinner size={18} className="text-indigo-600" />
+      ) : (
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          <Field label="Email di destinazione">
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tuaemail@esempio.it" />
+          </Field>
+          <Field
+            label="Chiave API Resend"
+            hint={hasKey ? "Già impostata — lascia vuoto per non cambiarla." : "Non ancora impostata."}
+          >
+            <Input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={hasKey ? "••••••••••••" : "re_xxxxxxxxxxxxxxxx"}
+              autoComplete="off"
+            />
+          </Field>
+          {done && <p className="text-sm text-emerald-700 dark:text-emerald-400">Impostazioni notifiche salvate.</p>}
+          <ErrorText>{error}</ErrorText>
+          <Button type="submit" disabled={saving}>
+            {saving ? <Spinner size={16} /> : "Salva notifiche"}
+          </Button>
+        </form>
+      )}
+    </div>
   );
 }
