@@ -37,7 +37,10 @@ export default function EmployeesAdmin() {
   return (
     <div className="flex flex-col gap-6">
       <ErrorText>{error}</ErrorText>
-      <Button className="self-start" onClick={() => setEditing({ nome: "", pin: randomPin(), hourlyRate: 0, payday: null, attivo: true })}>
+      <Button
+        className="self-start"
+        onClick={() => setEditing({ nome: "", pin: randomPin(), hourlyRate: 0, payday: null, email: "", attivo: true })}
+      >
         <Plus size={16} /> Nuovo dipendente
       </Button>
 
@@ -81,6 +84,7 @@ function Section({ title, items, onEdit, empty }) {
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   PIN {e.pin} · {formatCurrency(e.hourlyRate)}/h
                   {(e.payday === 0 || e.payday) && ` · Paga: ${paydayLabel(e.payday)}`}
+                  {e.email && ` · ${e.email}`}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -107,6 +111,7 @@ function EmployeeFormModal({ employee, onClose, onSaved }) {
   const [pin, setPin] = useState(employee.pin);
   const [hourlyRate, setHourlyRate] = useState(String(employee.hourlyRate));
   const [payday, setPayday] = useState(employee.payday === null || employee.payday === undefined ? "" : String(employee.payday));
+  const [email, setEmail] = useState(employee.email || "");
   const [attivo, setAttivo] = useState(employee.attivo);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -127,6 +132,7 @@ function EmployeeFormModal({ employee, onClose, onSaved }) {
         hourlyRate: rate,
         attivo,
         payday: payday === "" ? null : Number(payday),
+        email: email.trim(),
       });
       onSaved();
     } catch (e) {
@@ -166,6 +172,9 @@ function EmployeeFormModal({ employee, onClose, onSaved }) {
               </option>
             ))}
           </Select>
+        </Field>
+        <Field label="Email (facoltativa)" hint="Se impostata, il dipendente riceve un'email quando accetti o rifiuti una sua richiesta.">
+          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="dipendente@esempio.it" />
         </Field>
         {!isNew && (
           <label className="flex items-center gap-2 text-sm font-600 text-slate-700 dark:text-slate-300">

@@ -28,12 +28,16 @@ create extension if not exists "pgcrypto";
 -- "fine mese" (l'app calcola l'ultimo giorno del mese, con clamp se il
 -- numero scelto supera i giorni del mese, es. 31 in un mese da 30). Solo
 -- informativo/promemoria: non influenza il calcolo delle ore da pagare.
+-- email: facoltativa, serve solo per mandare al dipendente l'esito delle
+-- sue richieste (accettata/rifiutata). Se lasciata vuota, quel dipendente
+-- continua a vedere l'esito solo in-app al prossimo accesso col PIN.
 create table if not exists employees (
   id uuid primary key default gen_random_uuid(),
   nome text not null,
   pin text not null check (pin ~ '^[0-9]{4}$'),
   hourly_rate numeric not null default 0 check (hourly_rate >= 0),
   payday int check (payday is null or (payday >= 0 and payday <= 31)),
+  email text,
   attivo boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -41,6 +45,7 @@ create table if not exists employees (
 alter table employees add column if not exists payday int;
 alter table employees drop constraint if exists employees_payday_check;
 alter table employees add constraint employees_payday_check check (payday is null or (payday >= 0 and payday <= 31));
+alter table employees add column if not exists email text;
 
 -- PIN univoco solo tra i dipendenti attivi: un dipendente disattivato
 -- libera il proprio PIN per il riutilizzo.
@@ -285,6 +290,7 @@ grant execute on function get_employees_admin() to anon;
 -- Firma precedente (senza giorno di paga): rimossa per evitare ambiguità
 -- con quella nuova a 6 argomenti, che ha un default sull'ultimo.
 drop function if exists admin_save_employee(uuid, text, text, numeric, boolean);
+drop function if exists admin_save_employee(uuid, text, text, numeric, boolean, int);
 
 create or replace function admin_save_employee(
   p_id uuid,
@@ -292,7 +298,8 @@ create or replace function admin_save_employee(
   p_pin text,
   p_hourly_rate numeric,
   p_attivo boolean,
-  p_payday int default null
+  p_payday int default null,
+  p_email text default null
 )
 returns uuid
 language plpgsql
@@ -303,19 +310,20 @@ declare
   v_id uuid;
 begin
   if p_id is null then
-    insert into employees (nome, pin, hourly_rate, attivo, payday)
-    values (trim(p_nome), p_pin, p_hourly_rate, p_attivo, p_payday)
+    insert into employees (nome, pin, hourly_rate, attivo, payday, email)
+    values (trim(p_nome), p_pin, p_hourly_rate, p_attivo, p_payday, nullif(trim(coalesce(p_email, '')), ''))
     returning id into v_id;
   else
     update employees
-      set nome = trim(p_nome), pin = p_pin, hourly_rate = p_hourly_rate, attivo = p_attivo, payday = p_payday
+      set nome = trim(p_nome), pin = p_pin, hourly_rate = p_hourly_rate, attivo = p_attivo, payday = p_payday,
+          email = nullif(trim(coalesce(p_email, '')), '')
       where id = p_id
       returning id into v_id;
   end if;
   return v_id;
 end;
 $$;
-grant execute on function admin_save_employee(uuid, text, text, numeric, boolean, int) to anon;
+grant execute on function admin_save_employee(uuid, text, text, numeric, boolean, int, text) to anon;
 
 -- ---------------------------------------------------------------------
 -- Funzioni RPC: gestione turni da parte del Titolare
@@ -615,7 +623,12 @@ as $$
 $$;
 grant execute on function has_resend_api_key() to anon;
 
-create or replace function notify_owner(p_subject text, p_html text)
+-- Mittente sul dominio verificato su Resend. Se in futuro cambi dominio,
+-- basta rieseguire questo file dopo aver modificato la riga qui sotto.
+-- Invio generico: usato sia per notificare il Titolare sia per
+-- notificare un dipendente. Fire-and-forget, non fa mai fallire chi lo
+-- chiama (richiesta del dipendente o risoluzione del Titolare).
+create or replace function send_email(p_to text, p_subject text, p_html text)
 returns void
 language plpgsql
 security definer
@@ -623,11 +636,9 @@ set search_path = public
 as $$
 declare
   v_key text;
-  v_email text;
 begin
   select value->>'key' into v_key from settings where key = 'resend_api_key';
-  select value->>'email' into v_email from settings where key = 'notification_email';
-  if coalesce(v_key, '') = '' or coalesce(v_email, '') = '' then
+  if coalesce(v_key, '') = '' or coalesce(p_to, '') = '' then
     return;
   end if;
   begin
@@ -635,8 +646,8 @@ begin
       url := 'https://api.resend.com/emails',
       headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key),
       body := jsonb_build_object(
-        'from', 'ORE <onboarding@resend.dev>',
-        'to', jsonb_build_array(v_email),
+        'from', 'ORE <notifiche@fitpointactive.com>',
+        'to', jsonb_build_array(p_to),
         'subject', p_subject,
         'html', p_html
       )
@@ -644,6 +655,21 @@ begin
   exception when others then
     null;
   end;
+end;
+$$;
+grant execute on function send_email(text, text, text) to anon;
+
+create or replace function notify_owner(p_subject text, p_html text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text;
+begin
+  select value->>'email' into v_email from settings where key = 'notification_email';
+  perform send_email(v_email, p_subject, p_html);
 end;
 $$;
 grant execute on function notify_owner(text, text) to anon;
@@ -706,6 +732,88 @@ drop trigger if exists trg_notify_absence_request on absence_requests;
 create trigger trg_notify_absence_request
   after insert on absence_requests
   for each row execute function notify_absence_request();
+
+-- ---------------------------------------------------------------------
+-- Notifica email al dipendente quando il Titolare accetta/rifiuta una
+-- sua richiesta (solo se quel dipendente ha un'email impostata; se non
+-- ce l'ha, l'esito resta comunque visibile in-app al prossimo PIN).
+-- Scatta solo sulla transizione "in_attesa" -> risolta, non ad ogni
+-- update (es. mark_*_seen non la fa scattare di nuovo).
+-- ---------------------------------------------------------------------
+create or replace function notify_employee_edit_request_resolved()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text;
+  v_esito text;
+  v_subject text;
+  v_html text;
+begin
+  select email into v_email from employees where id = new.employee_id;
+  if coalesce(v_email, '') = '' then
+    return new;
+  end if;
+  v_esito := case when new.stato = 'accettata' then 'accettata' else 'rifiutata' end;
+  if new.shift_id is not null then
+    v_subject := 'ORE: la tua richiesta di modifica turno è stata ' || v_esito;
+    v_html := '<p>La tua richiesta di modifica turno è stata <b>' || v_esito || '</b>.</p>';
+  else
+    v_subject := 'ORE: il turno che hai proposto è stato ' || v_esito;
+    v_html := '<p>Il turno che hai proposto per il ' || to_char(new.proposed_date, 'DD/MM/YYYY')
+      || ' è stato <b>' || v_esito || '</b>.</p>';
+  end if;
+  if coalesce(new.risposta, '') != '' then
+    v_html := v_html || '<p>Nota del Titolare: ' || new.risposta || '</p>';
+  end if;
+  perform send_email(v_email, v_subject, v_html);
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_notify_employee_edit_request on edit_requests;
+create trigger trg_notify_employee_edit_request
+  after update on edit_requests
+  for each row
+  when (old.stato = 'in_attesa' and new.stato != 'in_attesa')
+  execute function notify_employee_edit_request_resolved();
+
+create or replace function notify_employee_absence_request_resolved()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text;
+  v_esito text;
+  v_subject text;
+  v_html text;
+begin
+  select email into v_email from employees where id = new.employee_id;
+  if coalesce(v_email, '') = '' then
+    return new;
+  end if;
+  v_esito := case when new.stato = 'accettata' then 'accettata' else 'rifiutata' end;
+  v_subject := 'ORE: la tua richiesta di assenza è stata ' || v_esito;
+  v_html := '<p>La tua richiesta di assenza dal ' || to_char(new.date_from, 'DD/MM/YYYY')
+    || ' al ' || to_char(new.date_to, 'DD/MM/YYYY') || ' è stata <b>' || v_esito || '</b>.</p>';
+  if coalesce(new.risposta, '') != '' then
+    v_html := v_html || '<p>Nota del Titolare: ' || new.risposta || '</p>';
+  end if;
+  perform send_email(v_email, v_subject, v_html);
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_notify_employee_absence_request on absence_requests;
+create trigger trg_notify_employee_absence_request
+  after update on absence_requests
+  for each row
+  when (old.stato = 'in_attesa' and new.stato != 'in_attesa')
+  execute function notify_employee_absence_request_resolved();
 
 -- ---------------------------------------------------------------------
 -- Dati iniziali (eseguire una sola volta; ON CONFLICT evita duplicati)

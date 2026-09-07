@@ -7,6 +7,7 @@ function mapEmployee(row) {
     pin: row.pin,
     hourlyRate: Number(row.hourly_rate) || 0,
     payday: row.payday === null || row.payday === undefined ? null : Number(row.payday),
+    email: row.email || "",
     attivo: row.attivo,
     createdAt: row.created_at,
   };
@@ -104,7 +105,7 @@ export async function getEmployeesAdmin() {
 }
 
 // payday: null (non impostato), 0 (fine mese), 1-31 (giorno del mese).
-export async function saveEmployee({ id, nome, pin, hourlyRate, attivo, payday }) {
+export async function saveEmployee({ id, nome, pin, hourlyRate, attivo, payday, email }) {
   const { data, error } = await supabase.rpc("admin_save_employee", {
     p_id: id || null,
     p_nome: nome,
@@ -112,6 +113,7 @@ export async function saveEmployee({ id, nome, pin, hourlyRate, attivo, payday }
     p_hourly_rate: hourlyRate,
     p_attivo: attivo,
     p_payday: payday === undefined ? null : payday,
+    p_email: email || null,
   });
   if (error) throw error;
   return data;
