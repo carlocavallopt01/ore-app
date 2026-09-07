@@ -16,6 +16,7 @@ import ThemeToggle from "../components/ThemeToggle";
 import RefreshButton from "../components/RefreshButton";
 import PinPad from "../components/PinPad";
 import { Button, Card, Field, Input, Textarea, Modal, ErrorText, EmptyState, Spinner } from "../components/ui";
+import { DatePickerField, DateRangePickerField } from "../components/DatePicker";
 
 const today = getRomeTodayISO();
 
@@ -497,7 +498,7 @@ function EditRequestModal({ employeeId, initialShift, onClose, onSubmitted }) {
         ) : (
           <>
             <Field label="Data">
-              <Input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />
+              <DatePickerField value={date} max={today} onChange={setDate} />
             </Field>
 
             {date && dayLoading && <Spinner size={18} className="text-indigo-600" />}
@@ -606,14 +607,16 @@ function AbsenceRequestModal({ employeeId, onClose, onSubmitted }) {
       }
     >
       <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Dal">
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          </Field>
-          <Field label="Al">
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          </Field>
-        </div>
+        <Field label="Periodo di assenza">
+          <DateRangePickerField
+            from={dateFrom}
+            to={dateTo}
+            onChange={({ from, to }) => {
+              setDateFrom(from);
+              setDateTo(to);
+            }}
+          />
+        </Field>
         <label className="flex items-center gap-2 text-sm font-600 text-slate-700 dark:text-slate-300">
           <input type="checkbox" checked={interaGiornata} onChange={(e) => setInteraGiornata(e.target.checked)} className="h-4 w-4 rounded" />
           Giornata intera
