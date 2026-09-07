@@ -12,6 +12,7 @@ import {
   markAbsenceRequestSeen,
   getPendingShiftProposals,
   respondShiftProposal,
+  getMyPendingHours,
 } from "../lib/api";
 import { getRomeTodayISO, formatDateLong, formatDateShort, formatTimeHM, minutesBetween, formatDurationHM } from "../lib/time";
 import ThemeToggle from "../components/ThemeToggle";
@@ -38,6 +39,7 @@ export default function EmployeeSide({ navigate }) {
   const [toast, setToast] = useState("");
   const [notifications, setNotifications] = useState(null); // { edits: [], absences: [] } | null
   const [proposals, setProposals] = useState(null); // turni proposti dal Titolare, in attesa di risposta
+  const [pendingHours, setPendingHours] = useState(null); // { fromDate, totalMinutes, totalHours } | null
 
   useEffect(() => {
     getEmployeesPublic()
@@ -75,6 +77,7 @@ export default function EmployeeSide({ navigate }) {
     setShifts([]);
     setNotifications(null);
     setProposals(null);
+    setPendingHours(null);
   }
 
   const handlePinComplete = useCallback(
@@ -97,6 +100,11 @@ export default function EmployeeSide({ navigate }) {
             .then((p) => {
               if (p.length > 0) setProposals(p);
             })
+            .catch(() => {
+              // silenzioso: come sopra
+            });
+          getMyPendingHours(selected.id)
+            .then(setPendingHours)
             .catch(() => {
               // silenzioso: come sopra
             });
@@ -183,6 +191,18 @@ export default function EmployeeSide({ navigate }) {
         </button>
         <span className="text-sm font-600 text-slate-800 dark:text-slate-100">{selected.nome}</span>
       </div>
+
+      {pendingHours && (
+        <Card className="mb-6 flex items-center justify-between px-4 py-3.5">
+          <div>
+            <p className="text-xs font-600 uppercase tracking-wide text-slate-500 dark:text-slate-400">Ore da pagare</p>
+            <p className="text-2xl font-700 text-slate-900 dark:text-white">{formatDurationHM(pendingHours.totalMinutes)}</p>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            dal {pendingHours.fromDate ? formatDateShort(pendingHours.fromDate) : "sempre"}
+          </p>
+        </Card>
+      )}
 
       <h1 className="text-xl font-700 capitalize text-slate-900 dark:text-white">{formatDateLong(today)}</h1>
       <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">

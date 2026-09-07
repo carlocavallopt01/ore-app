@@ -390,6 +390,16 @@ export async function getPendingHours() {
   return data.map(mapPendingHours);
 }
 
+// Ore da pagare del singolo dipendente (mai il costo orario), mostrate
+// sulla sua home dopo il PIN.
+export async function getMyPendingHours(employeeId) {
+  const { data, error } = await supabase.rpc("get_pending_hours_for_employee", { p_employee_id: employeeId });
+  if (error) throw error;
+  const row = data[0];
+  if (!row) return { fromDate: null, totalMinutes: 0, totalHours: 0 };
+  return { fromDate: row.from_date, totalMinutes: Number(row.total_minutes) || 0, totalHours: Number(row.total_hours) || 0 };
+}
+
 export async function markPaid(employeeId, dateTo) {
   const { error } = await supabase.rpc("mark_paid", { p_employee_id: employeeId, p_date_to: dateTo });
   if (error) throw error;

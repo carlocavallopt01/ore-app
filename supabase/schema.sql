@@ -999,6 +999,37 @@ create trigger trg_notify_owner_shift_proposal
   execute function notify_owner_shift_proposal_resolved();
 
 -- ---------------------------------------------------------------------
+-- Ore da pagare per il singolo dipendente (mostrate sulla sua home dopo
+-- il PIN). A differenza di get_pending_hours() (riservata al Titolare),
+-- non restituisce mai il costo orario né i dati di altri dipendenti: solo
+-- le ore proprie, dallo stesso ultimo pagamento registrato in poi.
+create or replace function get_pending_hours_for_employee(p_employee_id uuid)
+returns table (
+  from_date date,
+  total_minutes bigint,
+  total_hours numeric
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    p.last_paid,
+    coalesce(sum(extract(epoch from (s.end_time - s.start_time)) / 60), 0)::bigint,
+    round(coalesce(sum(extract(epoch from (s.end_time - s.start_time)) / 60), 0) / 60.0, 2)
+  from employees e
+  left join lateral (
+    select max(date_to) as last_paid from payments where payments.employee_id = e.id
+  ) p on true
+  left join shifts s
+    on s.employee_id = e.id
+    and (p.last_paid is null or s.date > p.last_paid)
+  where e.id = p_employee_id
+  group by p.last_paid;
+$$;
+grant execute on function get_pending_hours_for_employee(uuid) to anon;
+
+-- ---------------------------------------------------------------------
 -- Dati iniziali (eseguire una sola volta; ON CONFLICT evita duplicati)
 -- ---------------------------------------------------------------------
 insert into settings (key, value) values
