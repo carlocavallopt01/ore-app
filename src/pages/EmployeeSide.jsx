@@ -195,7 +195,7 @@ export default function EmployeeSide({ navigate }) {
       {pendingHours && (
         <Card className="mb-6 flex items-center justify-between px-4 py-3.5">
           <div>
-            <p className="text-xs font-600 uppercase tracking-wide text-slate-500 dark:text-slate-400">Ore da pagare</p>
+            <p className="text-xs font-600 uppercase tracking-wide text-slate-500 dark:text-slate-400">Ore da conteggiare</p>
             <p className="text-2xl font-700 text-slate-900 dark:text-white">{formatDurationHM(pendingHours.totalMinutes)}</p>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
