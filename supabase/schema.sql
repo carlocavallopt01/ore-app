@@ -646,7 +646,7 @@ begin
       url := 'https://api.resend.com/emails',
       headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key),
       body := jsonb_build_object(
-        'from', 'ORE <notifiche@fitpointactive.com>',
+        'from', 'ORE <notifiche@notifiche.fitpointactive.com>',
         'to', jsonb_build_array(p_to),
         'subject', p_subject,
         'html', p_html
