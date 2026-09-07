@@ -10,6 +10,8 @@ import {
   getUnseenResolvedRequests,
   markEditRequestSeen,
   markAbsenceRequestSeen,
+  getPendingShiftProposals,
+  respondShiftProposal,
 } from "../lib/api";
 import { getRomeTodayISO, formatDateLong, formatDateShort, formatTimeHM, minutesBetween, formatDurationHM } from "../lib/time";
 import ThemeToggle from "../components/ThemeToggle";
@@ -35,6 +37,7 @@ export default function EmployeeSide({ navigate }) {
   const [showAbsenceModal, setShowAbsenceModal] = useState(false);
   const [toast, setToast] = useState("");
   const [notifications, setNotifications] = useState(null); // { edits: [], absences: [] } | null
+  const [proposals, setProposals] = useState(null); // turni proposti dal Titolare, in attesa di risposta
 
   useEffect(() => {
     getEmployeesPublic()
@@ -71,6 +74,7 @@ export default function EmployeeSide({ navigate }) {
     setPinError("");
     setShifts([]);
     setNotifications(null);
+    setProposals(null);
   }
 
   const handlePinComplete = useCallback(
@@ -88,6 +92,13 @@ export default function EmployeeSide({ navigate }) {
             })
             .catch(() => {
               // silenzioso: le notifiche non sono critiche per timbrare
+            });
+          getPendingShiftProposals(selected.id)
+            .then((p) => {
+              if (p.length > 0) setProposals(p);
+            })
+            .catch(() => {
+              // silenzioso: come sopra
             });
         } else {
           setPinError("PIN errato, riprova.");
@@ -263,8 +274,17 @@ export default function EmployeeSide({ navigate }) {
         />
       )}
 
-      {notifications && (notifications.edits.length > 0 || notifications.absences.length > 0) && (
-        <NotificationsModal notifications={notifications} setNotifications={setNotifications} />
+      {proposals && proposals.length > 0 ? (
+        <ProposalsModal
+          proposals={proposals}
+          setProposals={setProposals}
+          onResponded={() => loadToday(selected.id)}
+        />
+      ) : (
+        notifications &&
+        (notifications.edits.length > 0 || notifications.absences.length > 0) && (
+          <NotificationsModal notifications={notifications} setNotifications={setNotifications} />
+        )
       )}
     </Shell>
   );
@@ -362,6 +382,79 @@ function NotificationsModal({ notifications, setNotifications }) {
         ))}
       </div>
     </Modal>
+  );
+}
+
+function ProposalsModal({ proposals, setProposals, onResponded }) {
+  return (
+    <Modal title="Turno proposto dal Titolare" onClose={() => {}}>
+      <div className="flex flex-col gap-3">
+        {proposals.map((p) => (
+          <ProposalCard
+            key={p.id}
+            proposal={p}
+            onDone={() => {
+              setProposals((prev) => prev.filter((x) => x.id !== p.id));
+              onResponded();
+            }}
+          />
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+function ProposalCard({ proposal, onDone }) {
+  const [rejecting, setRejecting] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function respond(accetta, risposta) {
+    if (!accetta && !risposta.trim()) return setError("Scrivi il motivo del rifiuto.");
+    setSaving(true);
+    setError("");
+    try {
+      await respondShiftProposal(proposal.id, accetta, risposta.trim());
+      onDone();
+    } catch (e) {
+      setError(e.message || "Errore nell'invio della risposta.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <p className="font-700 text-slate-900 dark:text-white">
+        {formatDateShort(proposal.date)}, {formatTimeHM(proposal.startTime)} – {formatTimeHM(proposal.endTime)}
+      </p>
+      {proposal.motivo && <p className="mt-1 text-sm italic text-slate-500 dark:text-slate-400">Nota del Titolare: "{proposal.motivo}"</p>}
+      {!rejecting ? (
+        <div className="mt-3 flex gap-2">
+          <Button size="sm" variant="success" className="flex-1" disabled={saving} onClick={() => respond(true, "")}>
+            {saving ? <Spinner size={14} /> : "Accetta"}
+          </Button>
+          <Button size="sm" variant="danger" className="flex-1" disabled={saving} onClick={() => setRejecting(true)}>
+            Rifiuta
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-3 flex flex-col gap-2">
+          <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Motivo del rifiuto (obbligatorio)" />
+          <ErrorText>{error}</ErrorText>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" className="flex-1" disabled={saving} onClick={() => setRejecting(false)}>
+              Indietro
+            </Button>
+            <Button size="sm" variant="danger" className="flex-1" disabled={saving} onClick={() => respond(false, motivo)}>
+              {saving ? <Spinner size={14} /> : "Conferma rifiuto"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {!rejecting && error && <ErrorText>{error}</ErrorText>}
+    </Card>
   );
 }
 

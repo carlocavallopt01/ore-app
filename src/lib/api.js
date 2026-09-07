@@ -63,6 +63,21 @@ function mapAbsenceRequest(row) {
   };
 }
 
+function mapShiftProposal(row) {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    date: row.date,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    motivo: row.motivo,
+    stato: row.stato,
+    createdAt: row.created_at,
+    risoltaAt: row.risolta_at,
+    risposta: row.risposta,
+  };
+}
+
 function mapPendingHours(row) {
   return {
     employeeId: row.employee_id,
@@ -284,6 +299,43 @@ export async function getAbsenceRequestsAdmin() {
 
 export async function resolveAbsenceRequest(id, accetta, risposta) {
   const { error } = await supabase.rpc("resolve_absence_request", {
+    p_id: id,
+    p_accetta: accetta,
+    p_risposta: risposta || null,
+  });
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// Turni proposti dal Titolare (es. sostituzione), da accettare/rifiutare
+// da parte del dipendente.
+// ---------------------------------------------------------------------
+export async function createShiftProposal({ employeeId, date, startTime, endTime, motivo }) {
+  const { data, error } = await supabase.rpc("create_shift_proposal", {
+    p_employee_id: employeeId,
+    p_date: date,
+    p_start_time: startTime,
+    p_end_time: endTime,
+    p_motivo: motivo || null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function getShiftProposalsAdmin() {
+  const { data, error } = await supabase.rpc("get_shift_proposals_admin");
+  if (error) throw error;
+  return data.map(mapShiftProposal);
+}
+
+export async function getPendingShiftProposals(employeeId) {
+  const { data, error } = await supabase.rpc("get_pending_shift_proposals", { p_employee_id: employeeId });
+  if (error) throw error;
+  return data.map(mapShiftProposal);
+}
+
+export async function respondShiftProposal(id, accetta, risposta) {
+  const { error } = await supabase.rpc("respond_shift_proposal", {
     p_id: id,
     p_accetta: accetta,
     p_risposta: risposta || null,

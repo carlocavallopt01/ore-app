@@ -816,6 +816,189 @@ create trigger trg_notify_employee_absence_request
   execute function notify_employee_absence_request_resolved();
 
 -- ---------------------------------------------------------------------
+-- Turni proposti dal Titolare (es. sostituzione): il Titolare propone un
+-- turno (data, orario, nota facoltativa) a un dipendente specifico, che
+-- deve accettarlo o rifiutarlo (con motivazione) al prossimo accesso col
+-- PIN. Accettando, il turno viene creato automaticamente. In entrambi i
+-- casi il Titolare riceve un'email con l'esito (se configurata).
+-- ---------------------------------------------------------------------
+create table if not exists shift_proposals (
+  id uuid primary key default gen_random_uuid(),
+  employee_id uuid not null references employees(id) on delete cascade,
+  date date not null,
+  start_time time not null,
+  end_time time not null,
+  motivo text,
+  stato text not null default 'in_attesa' check (stato in ('in_attesa', 'accettata', 'rifiutata')),
+  created_at timestamptz not null default now(),
+  risolta_at timestamptz,
+  risposta text,
+  check (end_time > start_time)
+);
+
+create index if not exists shift_proposals_employee_idx on shift_proposals (employee_id, stato);
+
+alter table shift_proposals enable row level security;
+-- Nessuna policy per anon sulla tabella base: creazione, lettura admin e
+-- risposta del dipendente passano solo dalle funzioni RPC qui sotto (la
+-- creazione è riservata alla schermata Titolare, protetta dal codice a 6
+-- cifre; la risposta dal PIN del dipendente).
+
+create or replace function create_shift_proposal(
+  p_employee_id uuid,
+  p_date date,
+  p_start_time time,
+  p_end_time time,
+  p_motivo text default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id uuid;
+begin
+  if p_end_time <= p_start_time then
+    raise exception 'L''orario di uscita deve essere dopo quello di entrata';
+  end if;
+  insert into shift_proposals (employee_id, date, start_time, end_time, motivo)
+  values (p_employee_id, p_date, p_start_time, p_end_time, nullif(trim(coalesce(p_motivo, '')), ''))
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+grant execute on function create_shift_proposal(uuid, date, time, time, text) to anon;
+
+create or replace function get_shift_proposals_admin()
+returns setof shift_proposals
+language sql
+security definer
+set search_path = public
+as $$
+  select * from shift_proposals order by created_at desc;
+$$;
+grant execute on function get_shift_proposals_admin() to anon;
+
+create or replace function get_pending_shift_proposals(p_employee_id uuid)
+returns setof shift_proposals
+language sql
+security definer
+set search_path = public
+as $$
+  select * from shift_proposals
+    where employee_id = p_employee_id and stato = 'in_attesa'
+    order by created_at;
+$$;
+grant execute on function get_pending_shift_proposals(uuid) to anon;
+
+-- Se il dipendente accetta, il turno proposto viene creato subito nella
+-- tabella shifts (bloccato come ogni altro turno).
+create or replace function respond_shift_proposal(p_id uuid, p_accetta boolean, p_risposta text default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_employee_id uuid;
+  v_date date;
+  v_start time;
+  v_end time;
+begin
+  select employee_id, date, start_time, end_time
+    into v_employee_id, v_date, v_start, v_end
+    from shift_proposals
+    where id = p_id and stato = 'in_attesa'
+    for update;
+
+  if not found then
+    return;
+  end if;
+
+  if p_accetta then
+    insert into shifts (employee_id, date, start_time, end_time, locked)
+    values (v_employee_id, v_date, v_start, v_end, true);
+  end if;
+
+  update shift_proposals
+    set stato = case when p_accetta then 'accettata' else 'rifiutata' end,
+        risolta_at = now(),
+        risposta = p_risposta
+    where id = p_id;
+end;
+$$;
+grant execute on function respond_shift_proposal(uuid, boolean, text) to anon;
+
+-- Notifica email al dipendente quando il Titolare gli propone un nuovo
+-- turno (solo se ha un'email impostata).
+create or replace function notify_employee_shift_proposal()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text;
+  v_subject text;
+  v_html text;
+begin
+  select email into v_email from employees where id = new.employee_id;
+  if coalesce(v_email, '') = '' then
+    return new;
+  end if;
+  v_subject := 'ORE: ti è stato proposto un turno per il ' || to_char(new.date, 'DD/MM/YYYY');
+  v_html := '<p>Ti è stato proposto un turno per il ' || to_char(new.date, 'DD/MM/YYYY')
+    || ', dalle ' || new.start_time || ' alle ' || new.end_time || '.</p>';
+  if coalesce(new.motivo, '') != '' then
+    v_html := v_html || '<p>Nota del Titolare: ' || new.motivo || '</p>';
+  end if;
+  v_html := v_html || '<p>Accedi con il tuo PIN per accettarlo o rifiutarlo.</p>';
+  perform send_email(v_email, v_subject, v_html);
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_notify_employee_shift_proposal on shift_proposals;
+create trigger trg_notify_employee_shift_proposal
+  after insert on shift_proposals
+  for each row execute function notify_employee_shift_proposal();
+
+-- Notifica email al Titolare quando il dipendente accetta o rifiuta un
+-- turno proposto (con la motivazione, se il dipendente l'ha scritta).
+create or replace function notify_owner_shift_proposal_resolved()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_nome text;
+  v_esito text;
+  v_subject text;
+  v_html text;
+begin
+  select nome into v_nome from employees where id = new.employee_id;
+  v_esito := case when new.stato = 'accettata' then 'accettato' else 'rifiutato' end;
+  v_subject := 'ORE: ' || coalesce(v_nome, 'un dipendente') || ' ha ' || v_esito || ' il turno proposto';
+  v_html := '<p><b>' || coalesce(v_nome, 'Un dipendente') || '</b> ha <b>' || v_esito || '</b> il turno proposto per il '
+    || to_char(new.date, 'DD/MM/YYYY') || ' (' || new.start_time || '–' || new.end_time || ').</p>';
+  if coalesce(new.risposta, '') != '' then
+    v_html := v_html || '<p>Motivazione: ' || new.risposta || '</p>';
+  end if;
+  perform notify_owner(v_subject, v_html);
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_notify_owner_shift_proposal on shift_proposals;
+create trigger trg_notify_owner_shift_proposal
+  after update on shift_proposals
+  for each row
+  when (old.stato = 'in_attesa' and new.stato != 'in_attesa')
+  execute function notify_owner_shift_proposal_resolved();
+
+-- ---------------------------------------------------------------------
 -- Dati iniziali (eseguire una sola volta; ON CONFLICT evita duplicati)
 -- ---------------------------------------------------------------------
 insert into settings (key, value) values
