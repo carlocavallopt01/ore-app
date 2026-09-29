@@ -83,7 +83,7 @@ export default function OwnerSide({ navigate }) {
   if (!unlocked) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-        <div className="mx-auto flex max-w-lg flex-col px-4 pb-24 pt-6 sm:pt-10">
+        <div className="mx-auto flex max-w-lg flex-col px-4 pb-24 pt-10 sm:pt-12">
           <div className="mb-4 flex items-center justify-between">
             <button onClick={() => navigate("/")} className="flex items-center gap-1 text-sm font-600 text-slate-500 dark:text-slate-400">
               <ChevronLeft size={16} /> Torna alla timbratura
@@ -108,7 +108,7 @@ export default function OwnerSide({ navigate }) {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-      <div className="mx-auto flex max-w-4xl flex-col px-4 pb-28 pt-6 sm:pt-10">
+      <div className="mx-auto flex max-w-4xl flex-col px-4 pb-28 pt-10 sm:pt-12">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-xl font-700 text-slate-900 dark:text-white">Area Titolare</h1>
           <div className="flex items-center gap-2">

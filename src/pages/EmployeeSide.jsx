@@ -313,7 +313,7 @@ export default function EmployeeSide({ navigate }) {
 function Shell({ children, footer, navigate }) {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-      <div className="mx-auto flex max-w-lg flex-col px-4 pb-24 pt-6 sm:pt-10">
+      <div className="mx-auto flex max-w-lg flex-col px-4 pb-24 pt-10 sm:pt-12">
         <div className="mb-4 flex justify-end gap-2">
           <RefreshButton />
           <ThemeToggle />
