@@ -324,7 +324,12 @@ function MarkPaidModal({ row, split, onClose, onSaved }) {
               : "Modificabile: le ore successive a questa data resteranno da pagare."
           }
         >
-          <Input type="date" value={dateTo} min={row.fromDate || undefined} max={today} onChange={(e) => setDateTo(e.target.value)} />
+          <div className="flex gap-2">
+            <Input type="date" value={dateTo} min={row.fromDate || undefined} max={today} onChange={(e) => setDateTo(e.target.value)} className="flex-1" />
+            <Button type="button" variant="secondary" onClick={() => setDateTo(lastPaydayISO(0, today))}>
+              Fine mese
+            </Button>
+          </div>
         </Field>
         <ErrorText>{error}</ErrorText>
       </div>
@@ -370,6 +375,11 @@ function PaymentRow({ payment, onChanged }) {
       <div className="flex flex-col gap-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
         <div className="flex items-center gap-2">
           <Input type="date" value={dateTo} max={today} onChange={(e) => setDateTo(e.target.value)} className="flex-1" />
+          <Button size="sm" variant="secondary" onClick={() => setDateTo(lastPaydayISO(0, today))}>
+            Fine mese
+          </Button>
+        </div>
+        <div className="flex items-center justify-end gap-2">
           <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>
             <X size={14} />
           </Button>
