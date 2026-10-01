@@ -8,7 +8,7 @@ import {
   adminDeletePayment,
   adminUpdatePayment,
 } from "../../lib/api";
-import { getRomeTodayISO, formatDateShort, formatDurationHM, formatCurrency, addDaysISO, nextPaydayISO } from "../../lib/time";
+import { getRomeTodayISO, formatDateShort, formatDurationHM, formatCurrency, addDaysISO, nextPaydayISO, lastPaydayISO } from "../../lib/time";
 import { Button, Card, Field, Input, Modal, ErrorText, Spinner, EmptyState } from "../ui";
 import ShiftRow from "./ShiftRow";
 
@@ -179,8 +179,20 @@ export default function PendingHours() {
   );
 }
 
+// Se il dipendente ha un giorno di paga impostato, propone come default
+// l'ultima scadenza già passata (anche se si sta pagando in ritardo),
+// invece di "oggi": così le giornate lavorate dopo quella scadenza non
+// finiscono per sbaglio dentro questo pagamento.
+function defaultPaidThrough(row) {
+  if (row.payday === null || row.payday === undefined) return today;
+  const lastPayday = lastPaydayISO(row.payday, today);
+  if (lastPayday && (!row.fromDate || lastPayday > row.fromDate)) return lastPayday;
+  return today;
+}
+
 function MarkPaidModal({ row, onClose, onSaved }) {
-  const [dateTo, setDateTo] = useState(today);
+  const suggested = defaultPaidThrough(row);
+  const [dateTo, setDateTo] = useState(suggested);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -219,7 +231,14 @@ function MarkPaidModal({ row, onClose, onSaved }) {
           <span className="font-600">{formatDateShort(dateTo)}</span> ({formatDurationHM(row.totalMinutes)},{" "}
           {formatCurrency(row.totalCost)})
         </p>
-        <Field label="Pagato fino al" hint="Modificabile: le ore successive a questa data resteranno da pagare.">
+        <Field
+          label="Pagato fino al"
+          hint={
+            suggested !== today
+              ? `Proposta in base al giorno di paga impostato (${formatDateShort(suggested)}), anche se oggi è un'altra data: così le ore successive restano da pagare. Modificabile.`
+              : "Modificabile: le ore successive a questa data resteranno da pagare."
+          }
+        >
           <Input type="date" value={dateTo} min={row.fromDate || undefined} max={today} onChange={(e) => setDateTo(e.target.value)} />
         </Field>
         <ErrorText>{error}</ErrorText>

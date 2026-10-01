@@ -140,6 +140,30 @@ export function nextPaydayISO(payday, fromISO = getRomeTodayISO()) {
   return candidateFor(nextYear, nextMonth);
 }
 
+// Ultima data di paga già passata (o oggi stesso) a partire da `payday`,
+// calcolata dalla data indicata (o da oggi). Usata per proporre di default
+// "pagato fino al" quando si registra un pagamento in ritardo: se il giorno
+// di paga previsto era, es., il 1° e si paga il 4, il taglio resta sul 1°
+// invece di finire per includere per sbaglio anche il 2 e il 3 (già di
+// competenza del periodo successivo).
+export function lastPaydayISO(payday, fromISO = getRomeTodayISO()) {
+  if (payday === null || payday === undefined) return null;
+  const [y, m] = fromISO.split("-").map(Number);
+
+  function candidateFor(year, month) {
+    const last = daysInMonth(year, month);
+    const day = payday === 0 ? last : Math.min(payday, last);
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  const thisMonth = candidateFor(y, m);
+  if (thisMonth <= fromISO) return thisMonth;
+
+  const prevMonth = m === 1 ? 12 : m - 1;
+  const prevYear = m === 1 ? y - 1 : y;
+  return candidateFor(prevYear, prevMonth);
+}
+
 export function paydayLabel(payday) {
   if (payday === null || payday === undefined) return "";
   return payday === 0 ? "Fine mese" : `Giorno ${payday}`;
