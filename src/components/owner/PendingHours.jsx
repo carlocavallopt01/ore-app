@@ -39,9 +39,11 @@ export default function PendingHours() {
   // lista non restano mescolati in un unico totale.
   const loadSplits = useCallback(async (data) => {
     const needsSplit = data.filter((r) => {
-      if (r.payday === null || r.payday === undefined || !r.fromDate) return false;
+      if (r.payday === null || r.payday === undefined) return false;
       const splitPoint = lastPaydayISO(r.payday, today);
-      return splitPoint && splitPoint > r.fromDate;
+      // fromDate nullo = mai pagato: in quel caso c'è sempre uno scaduto
+      // da separare, non solo quando è già passato un pagamento.
+      return splitPoint && (!r.fromDate || splitPoint > r.fromDate);
     });
     if (needsSplit.length === 0) {
       setSplitByEmployee({});
@@ -51,7 +53,10 @@ export default function PendingHours() {
       const entries = await Promise.all(
         needsSplit.map(async (r) => {
           const splitPoint = lastPaydayISO(r.payday, today);
-          const shifts = await getShiftsAdmin({ employeeId: r.employeeId, dateFrom: addDaysISO(r.fromDate, 1) });
+          const shifts = await getShiftsAdmin({
+            employeeId: r.employeeId,
+            dateFrom: r.fromDate ? addDaysISO(r.fromDate, 1) : undefined,
+          });
           let overdueMinutes = 0;
           let currentMinutes = 0;
           for (const s of shifts) {
