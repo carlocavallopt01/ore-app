@@ -8,7 +8,16 @@ import {
   adminDeletePayment,
   adminUpdatePayment,
 } from "../../lib/api";
-import { getRomeTodayISO, formatDateShort, formatDurationHM, formatCurrency, addDaysISO, nextPaydayISO, lastPaydayISO } from "../../lib/time";
+import {
+  getRomeTodayISO,
+  formatDateShort,
+  formatDurationHM,
+  formatCurrency,
+  addDaysISO,
+  nextPaydayISO,
+  lastPaydayISO,
+  minutesBetween,
+} from "../../lib/time";
 import { Button, Card, Field, Input, Modal, ErrorText, Spinner, EmptyState } from "../ui";
 import ShiftRow from "./ShiftRow";
 
@@ -22,6 +31,53 @@ export default function PendingHours() {
   const [detailByEmployee, setDetailByEmployee] = useState({});
   const [paymentsByEmployee, setPaymentsByEmployee] = useState({});
   const [detailLoading, setDetailLoading] = useState(false);
+  const [splitByEmployee, setSplitByEmployee] = useState({});
+
+  // Per i dipendenti con giorno di paga impostato e un periodo già scaduto
+  // senza essere stato pagato, calcola separatamente "scaduto" (fino
+  // all'ultima scadenza passata) e "in corso" (da lì a oggi), così in
+  // lista non restano mescolati in un unico totale.
+  const loadSplits = useCallback(async (data) => {
+    const needsSplit = data.filter((r) => {
+      if (r.payday === null || r.payday === undefined || !r.fromDate) return false;
+      const splitPoint = lastPaydayISO(r.payday, today);
+      return splitPoint && splitPoint > r.fromDate;
+    });
+    if (needsSplit.length === 0) {
+      setSplitByEmployee({});
+      return;
+    }
+    try {
+      const entries = await Promise.all(
+        needsSplit.map(async (r) => {
+          const splitPoint = lastPaydayISO(r.payday, today);
+          const shifts = await getShiftsAdmin({ employeeId: r.employeeId, dateFrom: addDaysISO(r.fromDate, 1) });
+          let overdueMinutes = 0;
+          let currentMinutes = 0;
+          for (const s of shifts) {
+            const mins = minutesBetween(s.startTime, s.endTime);
+            if (s.date <= splitPoint) overdueMinutes += mins;
+            else currentMinutes += mins;
+          }
+          return [
+            r.employeeId,
+            {
+              splitPoint,
+              overdueMinutes,
+              overdueCost: Math.round((overdueMinutes / 60) * r.hourlyRate * 100) / 100,
+              currentMinutes,
+              currentCost: Math.round((currentMinutes / 60) * r.hourlyRate * 100) / 100,
+            },
+          ];
+        })
+      );
+      // Mostra lo spacco solo se esiste davvero un "in corso" oltre allo
+      // scaduto: altrimenti non aggiunge nulla rispetto alla vista normale.
+      setSplitByEmployee(Object.fromEntries(entries.filter(([, v]) => v.currentMinutes > 0)));
+    } catch {
+      // silenzioso: non è critico, la vista resta quella non spaccata
+    }
+  }, []);
 
   const loadDetail = useCallback(async (row) => {
     setDetailLoading(true);
@@ -53,10 +109,11 @@ export default function PendingHours() {
         const row = data.find((r) => r.employeeId === expandedId);
         if (row) loadDetail(row);
       }
+      loadSplits(data);
     } catch (e) {
       setError(e.message || "Errore nel caricamento.");
     }
-  }, [expandedId, loadDetail]);
+  }, [expandedId, loadDetail, loadSplits]);
 
   useEffect(() => {
     load();
@@ -105,6 +162,7 @@ export default function PendingHours() {
             const expanded = expandedId === r.employeeId;
             const detail = detailByEmployee[r.employeeId];
             const payments = paymentsByEmployee[r.employeeId];
+            const split = splitByEmployee[r.employeeId];
             return (
               <Card key={r.employeeId} className="p-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -113,15 +171,36 @@ export default function PendingHours() {
                     onClick={() => toggleExpand(r)}
                     className="flex flex-1 items-center justify-between gap-2 text-left"
                   >
-                    <div>
+                    <div className="flex-1">
                       <p className="font-600 text-slate-900 dark:text-white">{r.nome}</p>
-                      <p className="text-sm text-slate-600 dark:text-slate-300">
-                        {formatDurationHM(r.totalMinutes)} · {formatCurrency(r.totalCost)}
-                      </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        dal {r.fromDate ? formatDateShort(r.fromDate) : "sempre"}
-                        {(r.payday === 0 || r.payday) && ` · prossima paga: ${formatDateShort(nextPaydayISO(r.payday))}`}
-                      </p>
+                      {split ? (
+                        <div className="mt-1 flex flex-col gap-1.5">
+                          <div className="rounded-lg bg-amber-50 px-2 py-1 dark:bg-amber-900/20">
+                            <p className="text-xs font-700 text-amber-700 dark:text-amber-400">
+                              Scaduto · paga prevista {formatDateShort(split.splitPoint)}
+                            </p>
+                            <p className="text-sm font-600 text-slate-800 dark:text-slate-100">
+                              {formatDurationHM(split.overdueMinutes)} · {formatCurrency(split.overdueCost)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-700 uppercase tracking-wide text-slate-400 dark:text-slate-500">In corso</p>
+                            <p className="text-sm text-slate-600 dark:text-slate-300">
+                              {formatDurationHM(split.currentMinutes)} · {formatCurrency(split.currentCost)}
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-sm text-slate-600 dark:text-slate-300">
+                            {formatDurationHM(r.totalMinutes)} · {formatCurrency(r.totalCost)}
+                          </p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            dal {r.fromDate ? formatDateShort(r.fromDate) : "sempre"}
+                            {(r.payday === 0 || r.payday) && ` · prossima paga: ${formatDateShort(nextPaydayISO(r.payday))}`}
+                          </p>
+                        </>
+                      )}
                     </div>
                     {expanded ? (
                       <ChevronUp size={16} className="shrink-0 text-slate-400" />
@@ -168,6 +247,7 @@ export default function PendingHours() {
       {payingFor && (
         <MarkPaidModal
           row={payingFor}
+          split={splitByEmployee[payingFor.employeeId]}
           onClose={() => setPayingFor(null)}
           onSaved={() => {
             setPayingFor(null);
@@ -190,11 +270,16 @@ function defaultPaidThrough(row) {
   return today;
 }
 
-function MarkPaidModal({ row, onClose, onSaved }) {
+function MarkPaidModal({ row, split, onClose, onSaved }) {
   const suggested = defaultPaidThrough(row);
   const [dateTo, setDateTo] = useState(suggested);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // Se esiste uno spacco scaduto/in corso, mostra il totale della sola
+  // parte scaduta (quella che la data proposta di default sta per
+  // saldare), non il totale combinato con il periodo ancora in corso.
+  const displayMinutes = split ? split.overdueMinutes : row.totalMinutes;
+  const displayCost = split ? split.overdueCost : row.totalCost;
 
   async function submit() {
     if (!dateTo) return setError("Inserisci una data.");
@@ -228,8 +313,8 @@ function MarkPaidModal({ row, onClose, onSaved }) {
       <div className="flex flex-col gap-4">
         <p className="text-sm text-slate-600 dark:text-slate-300">
           Periodo: dal {row.fromDate ? formatDateShort(row.fromDate) : "sempre"} al{" "}
-          <span className="font-600">{formatDateShort(dateTo)}</span> ({formatDurationHM(row.totalMinutes)},{" "}
-          {formatCurrency(row.totalCost)})
+          <span className="font-600">{formatDateShort(dateTo)}</span> ({formatDurationHM(displayMinutes)},{" "}
+          {formatCurrency(displayCost)})
         </p>
         <Field
           label="Pagato fino al"
